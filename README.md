@@ -1,11 +1,25 @@
 # Heksa Core
-Pierwszy lokalny rdzeń Heksy — wersja 0.1.0.
+Lokalny rdzeń Heksy — wersja 0.2.0.
 
 ## Co działa
 - Koordynator HeksaCore i lokalny System Agent.
 - Security Agent sprawdza każdą akcję przekazywaną agentom według jawnej listy uprawnień.
 - Dziennik decyzji w katalogu użytkownika: `.heksa/audit.jsonl`.
 - Konsola: `status`, `time`, `hello`, `agents`, `help`, `exit`.
+- Trwała kolejka SQLite: `queue status`, `queue time`, `tasks`, `run-next`, `cancel <id>`.
+- Uprawnienia są sprawdzane przy dodaniu zadania i ponownie przed wykonaniem.
+- Zadania zakończone i anulowane nie są wykonywane ponownie.
+
+## Pamięć zadań
+Zadania są zapisywane w `.heksa/tasks.sqlite3` w katalogu użytkownika.
+`run-next` wykonuje jedno oczekujące zadanie. Kolejka obsługuje obecnie tylko
+lokalne akcje `status` i `time`, bez usług zewnętrznych.
+Nie ma jeszcze automatycznego pracownika w tle.
+Po awarii zadanie w stanie `running` nie jest automatycznie powtarzane:
+wynik działania może być nieznany. Programistyczne `interrupt_running()`
+oznacza takie zadania jako `interrupted`; używaj go dopiero po potwierdzeniu,
+że poprzedni pracownik zakończył działanie. Brak automatycznych ponowień
+chroni przed powieleniem przyszłych działań zewnętrznych.
 
 Security Agent jest kontrolą na poziomie aplikacji, nie piaskownicą systemu operacyjnego.
 Nie chroni przed złośliwym kodem z dostępem do tego samego procesu lub plików.
