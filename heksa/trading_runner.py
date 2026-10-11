@@ -150,6 +150,19 @@ def build_best_eur_proposals(
             * (confidence / 100.0)
             * history_multiplier
         )
+
+        if journal is not None and proposal.get("status") == "PROPOSAL":
+            gate = journal.signal_gate(
+                opportunity.pair,
+                side=_signal_side(signal_name) or "",
+            )
+            proposal["signal_gate"] = gate
+            if not gate.get("allowed"):
+                proposal["status"] = "FILTERED"
+                proposal["reason"] = gate.get("reason")
+                proposal["requires_user_approval"] = False
+                proposal["final_score"] = 0.0
+
         proposals.append(proposal)
 
     proposals.sort(
@@ -160,8 +173,10 @@ def build_best_eur_proposals(
         reverse=True,
     )
 
-    selected = proposals[:limit]
-    actionable = sum(item.get("status") == "PROPOSAL" for item in selected)
+    actionable_items = [item for item in proposals if item.get("status") == "PROPOSAL"]
+    non_actionable_items = [item for item in proposals if item.get("status") != "PROPOSAL"]
+    selected = (actionable_items + non_actionable_items)[:limit]
+    actionable = len(actionable_items[:limit])
 
     return {
         "quote_currency": "EUR",
