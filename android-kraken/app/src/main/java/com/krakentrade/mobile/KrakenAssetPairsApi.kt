@@ -29,9 +29,13 @@ data class PairRules(
     val isOnline: Boolean get() = status.equals("online", ignoreCase = true)
 }
 
+interface PairRulesGateway {
+    override suspend fun fetchPair(pair: String): Result<PairRules>
+}
+
 class KrakenAssetPairsApi(
     private val baseUrl: String = "https://api.kraken.com"
-) {
+) : PairRulesGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun fetchPair(pair: String): Result<PairRules> = withContext(Dispatchers.IO) {
