@@ -6,6 +6,7 @@ from pathlib import Path
 from . import __version__
 from .pair_scanner import best_eur_pairs
 from .portfolio import fetch_portfolio_eur
+from .trading_runner import build_best_eur_proposals
 from .tasks import TaskQueue
 
 
@@ -15,7 +16,7 @@ class SecurityAgent:
     def __init__(self):
         self._allowed = {
             "system": frozenset({"status", "time"}),
-            "market": frozenset({"eur_pairs"}),
+            "market": frozenset({"eur_pairs", "signals"}),
             "portfolio": frozenset({"eur_value"}),
         }
 
@@ -39,23 +40,36 @@ class MarketAgent:
     name = "market"
 
     def run(self, action):
-        if action != "eur_pairs":
-            raise ValueError("Nieznana akcja rynku.")
+        if action == "eur_pairs":
+            pairs = best_eur_pairs(limit=5)
+            if not pairs:
+                return "Brak par EUR spełniających aktualne filtry."
 
-        pairs = best_eur_pairs(limit=5)
-        if not pairs:
-            return "Brak par EUR spełniających aktualne filtry."
+            rows = []
+            for index, item in enumerate(pairs, start=1):
+                rows.append(
+                    f"{index}. {item['pair']} | "
+                    f"score {item['opportunity_score']:.2f} | "
+                    f"24h {item['range_24h_pct']:.2f}% | "
+                    f"spread {item['spread_bps']:.1f} bps | "
+                    f"vol €{item['quote_volume_24h_eur']:.0f}"
+                )
+            return "\n".join(rows)
 
-        rows = []
-        for index, item in enumerate(pairs, start=1):
-            rows.append(
-                f"{index}. {item['pair']} | "
-                f"score {item['opportunity_score']:.2f} | "
-                f"24h {item['range_24h_pct']:.2f}% | "
-                f"spread {item['spread_bps']:.1f} bps | "
-                f"vol €{item['quote_volume_24h_eur']:.0f}"
-            )
-        return "\n".join(rows)
+        if action == "signals":
+            result = build_best_eur_proposals(limit=5)
+            rows = []
+            for index, item in enumerate(result["proposals"], start=1):
+                signal = item.get("signal") or {}
+                rows.append(
+                    f"{index}. {item['pair']} | {item['status']} | "
+                    f"{signal.get('signal', 'N/A')} | "
+                    f"conf {float(signal.get('confidence', 0.0)):.0f}% | "
+                    f"score {float(item.get('final_score', 0.0)):.2f}"
+                )
+            return "\n".join(rows) if rows else "Brak kandydatów."
+
+        raise ValueError("Nieznana akcja rynku.")
 
 
 class PortfolioAgent:
@@ -170,6 +184,9 @@ class HeksaCore:
         if normalized in {"markets", "pairs", "eur", "best"}:
             return self.dispatch("market", "eur_pairs")
 
+        if normalized in {"signals", "sygnaly", "sygnały", "candidates"}:
+            return self.dispatch("market", "signals")
+
         if normalized in {"portfolio", "portfel", "balance", "saldo"}:
             return self.dispatch("portfolio", "eur_value")
 
@@ -178,7 +195,7 @@ class HeksaCore:
 
         if normalized in {"help", "pomoc"}:
             return (
-                "Komendy: status, time, markets, portfolio, hello, agents, "
+                "Komendy: status, time, markets, signals, portfolio, hello, agents, "
                 "queue status|time|markets, tasks, run-next, cancel <id>, help, exit"
             )
 
