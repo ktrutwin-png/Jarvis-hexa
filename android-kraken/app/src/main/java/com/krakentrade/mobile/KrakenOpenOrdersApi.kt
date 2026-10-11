@@ -15,9 +15,14 @@ data class KrakenOpenOrder(
     val executedVolume: Double
 )
 
+interface OpenOrdersGateway {
+    override suspend fun listOpenOrders(): Result<List<KrakenOpenOrder>>
+    override suspend fun findConditionalChild(entryTxid: String, orderType: String): Result<KrakenOpenOrder?>
+}
+
 class KrakenOpenOrdersApi(
     private val transport: KrakenPrivateTransport
-) {
+) : OpenOrdersGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun listOpenOrders(): Result<List<KrakenOpenOrder>> =
