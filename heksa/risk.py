@@ -43,3 +43,23 @@ def validate_risk(
         raise ValueError("stop distance exceeds configured limit")
     if reward / risk < limits.min_reward_risk:
         raise ValueError("reward/risk below configured minimum")
+
+
+def performance_size_multiplier(recent: dict) -> float:
+    """Reduce exposure after weak recent outcomes; never increase above 1.0."""
+    closed = int(recent.get("closed_count") or 0)
+    losses_in_row = int(recent.get("consecutive_losses") or 0)
+    win_rate = float(recent.get("win_rate_pct") or 0.0)
+    pnl_eur = float(recent.get("pnl_eur") or 0.0)
+
+    if closed < 3:
+        return 1.0
+    if losses_in_row >= 5:
+        return 0.35
+    if losses_in_row >= 3:
+        return 0.60
+    if closed >= 6 and win_rate < 35.0:
+        return 0.70
+    if pnl_eur < 0 and win_rate < 45.0:
+        return 0.85
+    return 1.0
