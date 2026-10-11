@@ -19,7 +19,7 @@ sealed interface BracketReconcileResult {
 
 class SpotBracketMonitor(
     private val orders: KrakenOrderGateway,
-    private val openOrders: KrakenOpenOrdersApi
+    private val openOrders: OpenOrdersGateway
 ) {
     suspend fun discoverAndArm(
         proposal: ExecutableProposal,
