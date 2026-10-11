@@ -143,6 +143,67 @@ class SignalJournal:
             "result": result,
         }
 
+    def pair_performance(self, pair: str, side: str | None = None) -> dict:
+        """Return conservative historical quality stats for one market/side.
+
+        A small prior keeps early outcomes from dominating ranking decisions.
+        """
+        normalized_pair = pair.strip().upper()
+        params: list[object] = [normalized_pair]
+        where = "WHERE s.pair=? AND o.signal_id IS NOT NULL"
+
+        if side:
+            where += " AND s.side=?"
+            params.append(side.strip().lower())
+
+        with self._connect() as db:
+            row = db.execute(
+                f"""SELECT
+                    COUNT(*) AS closed_count,
+                    COALESCE(SUM(CASE WHEN o.result='win' THEN 1 ELSE 0 END), 0) AS wins,
+                    COALESCE(SUM(CASE WHEN o.result='loss' THEN 1 ELSE 0 END), 0) AS losses,
+                    COALESCE(SUM(o.pnl_eur), 0.0) AS pnl_eur,
+                    COALESCE(AVG(
+                        CASE
+                            WHEN s.position_eur > 0
+                            THEN (o.pnl_eur / s.position_eur) * 100.0
+                            ELSE NULL
+                        END
+                    ), 0.0) AS avg_return_pct
+                   FROM signals s
+                   JOIN outcomes o ON o.signal_id = s.id
+                   {where}""",
+                params,
+            ).fetchone()
+
+        closed = int(row["closed_count"])
+        wins = int(row["wins"])
+        losses = int(row["losses"])
+        avg_return_pct = float(row["avg_return_pct"])
+
+        # Beta(3,3) prior: early streaks are intentionally damped.
+        bayesian_win_rate = (wins + 3.0) / (closed + 6.0)
+
+        # Historical data must refine the live score, never overwhelm it.
+        if closed < 3:
+            multiplier = 1.0
+        else:
+            win_component = (bayesian_win_rate - 0.5) * 0.40
+            return_component = max(-5.0, min(5.0, avg_return_pct)) * 0.02
+            multiplier = max(0.80, min(1.20, 1.0 + win_component + return_component))
+
+        return {
+            "pair": normalized_pair,
+            "side": side.strip().lower() if side else None,
+            "closed_count": closed,
+            "wins": wins,
+            "losses": losses,
+            "bayesian_win_rate_pct": bayesian_win_rate * 100.0,
+            "avg_return_pct": avg_return_pct,
+            "pnl_eur": float(row["pnl_eur"]),
+            "ranking_multiplier": multiplier,
+        }
+
     def summary(self) -> dict:
         with self._connect() as db:
             row = db.execute(
