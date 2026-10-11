@@ -5,6 +5,7 @@ from pathlib import Path
 
 from . import __version__
 from .pair_scanner import best_eur_pairs
+from .portfolio import fetch_portfolio_eur
 from .tasks import TaskQueue
 
 
@@ -15,6 +16,7 @@ class SecurityAgent:
         self._allowed = {
             "system": frozenset({"status", "time"}),
             "market": frozenset({"eur_pairs"}),
+            "portfolio": frozenset({"eur_value"}),
         }
 
     def authorize(self, agent, action):
@@ -56,12 +58,31 @@ class MarketAgent:
         return "\n".join(rows)
 
 
+class PortfolioAgent:
+    name = "portfolio"
+
+    def run(self, action):
+        if action != "eur_value":
+            raise ValueError("Nieznana akcja portfela.")
+
+        snapshot = fetch_portfolio_eur()
+        lines = [f"Portfel: €{snapshot['total_eur']:.2f}"]
+        for item in snapshot["holdings"][:10]:
+            lines.append(
+                f"{item['asset']}: {item['amount']:.8g} | €{item['value_eur']:.2f}"
+            )
+        if snapshot["unpriced"]:
+            lines.append(f"Bez wyceny EUR: {len(snapshot['unpriced'])}")
+        return "\\n".join(lines)
+
+
 class HeksaCore:
     def __init__(self, data_dir=None):
         self.security = SecurityAgent()
         self._agents = {
             "system": SystemAgent(),
             "market": MarketAgent(),
+            "portfolio": PortfolioAgent(),
         }
         self.data_dir = Path(data_dir) if data_dir is not None else Path.home() / ".heksa"
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -149,16 +170,19 @@ class HeksaCore:
         if normalized in {"markets", "pairs", "eur", "best"}:
             return self.dispatch("market", "eur_pairs")
 
+        if normalized in {"portfolio", "portfel", "balance", "saldo"}:
+            return self.dispatch("portfolio", "eur_value")
+
         if normalized in {"hello", "hej"}:
             return "Witaj, szefie. Heksa gotowa."
 
         if normalized in {"help", "pomoc"}:
             return (
-                "Komendy: status, time, markets, hello, agents, "
+                "Komendy: status, time, markets, portfolio, hello, agents, "
                 "queue status|time|markets, tasks, run-next, cancel <id>, help, exit"
             )
 
         if normalized == "agents":
-            return "Security Agent: aktywny; System Agent: aktywny; Market Agent: aktywny."
+            return "Security Agent: aktywny; System Agent: aktywny; Market Agent: aktywny; Portfolio Agent: aktywny."
 
         return "Nieznana komenda. Wpisz help."
