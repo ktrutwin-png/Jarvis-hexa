@@ -10,6 +10,7 @@ from dataclasses import asdict
 import json
 from typing import TYPE_CHECKING
 
+from .execution_quality import assess_execution
 from .kraken_market import fetch_close_prices
 from .market_analysis import analyze_prices
 from .pair_scanner import rank_eur_pairs
@@ -27,7 +28,7 @@ def build_market_proposal(
 ) -> dict:
     display_pair = pair.strip().upper()
     request_pair = (api_pair or pair).strip().upper()
-    prices = fetch_close_prices(request_pair)
+    prices = fetch_close_prices(request_pair, interval=5)
     signal = analyze_prices(prices)
 
     if signal.signal == "WAIT":
@@ -36,6 +37,28 @@ def build_market_proposal(
             "api_pair": request_pair,
             "status": "WAIT",
             "signal": asdict(signal),
+            "confirmation": None,
+            "requires_user_approval": False,
+            "live_order_submitted": False,
+        }
+
+    confirmation_prices = fetch_close_prices(request_pair, interval=15)
+    confirmation = analyze_prices(
+        confirmation_prices,
+        fast_window=6,
+        slow_window=18,
+        momentum_window=4,
+        min_confidence=15.0,
+    )
+
+    if confirmation.signal != signal.signal:
+        return {
+            "pair": display_pair,
+            "api_pair": request_pair,
+            "status": "WAIT",
+            "reason": "timeframe_disagreement",
+            "signal": asdict(signal),
+            "confirmation": asdict(confirmation),
             "requires_user_approval": False,
             "live_order_submitted": False,
         }
@@ -65,6 +88,7 @@ def build_market_proposal(
             1.0 if position_eur is not None else max(0.0, min(1.0, risk_size_multiplier))
         ),
         "signal": asdict(signal),
+        "confirmation": asdict(confirmation),
         "requires_user_approval": True,
         "live_order_submitted": False,
     }
@@ -185,6 +209,46 @@ def build_best_eur_proposals(
                 proposal["reason"] = gate.get("reason")
                 proposal["requires_user_approval"] = False
                 proposal["final_score"] = 0.0
+
+        if proposal.get("status") == "PROPOSAL":
+            side = _signal_side(signal_name)
+            if side is None:
+                proposal["status"] = "FILTERED"
+                proposal["reason"] = "invalid_signal_side"
+                proposal["requires_user_approval"] = False
+                proposal["final_score"] = 0.0
+            else:
+                try:
+                    execution = assess_execution(
+                        opportunity.pair,
+                        side=side,
+                        position_eur=float(proposal.get("position_eur") or 0.0),
+                    )
+                    proposal["execution"] = execution.to_dict()
+
+                    if not execution.executable:
+                        proposal["status"] = "FILTERED"
+                        proposal["reason"] = "poor_execution_quality"
+                        proposal["requires_user_approval"] = False
+                        proposal["final_score"] = 0.0
+                    else:
+                        directional_imbalance = (
+                            execution.book_imbalance
+                            if side == "buy"
+                            else -execution.book_imbalance
+                        )
+                        book_multiplier = max(
+                            0.90,
+                            min(1.10, 1.0 + directional_imbalance * 0.10),
+                        )
+                        proposal["book_multiplier"] = book_multiplier
+                        proposal["final_score"] *= book_multiplier
+                except (RuntimeError, ValueError) as error:
+                    proposal["status"] = "FILTERED"
+                    proposal["reason"] = "execution_check_failed"
+                    proposal["execution_error"] = str(error)
+                    proposal["requires_user_approval"] = False
+                    proposal["final_score"] = 0.0
 
         proposals.append(proposal)
 
