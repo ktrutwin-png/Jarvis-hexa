@@ -30,7 +30,7 @@ data class PairRules(
 }
 
 interface PairRulesGateway {
-    override suspend fun fetchPair(pair: String): Result<PairRules>
+    suspend fun fetchPair(pair: String): Result<PairRules>
 }
 
 class KrakenAssetPairsApi(
@@ -38,7 +38,7 @@ class KrakenAssetPairsApi(
 ) : PairRulesGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun fetchPair(pair: String): Result<PairRules> = withContext(Dispatchers.IO) {
+    override suspend fun fetchPair(pair: String): Result<PairRules> = withContext(Dispatchers.IO) {
         runCatching {
             val encoded = URLEncoder.encode(pair, StandardCharsets.UTF_8.name())
             val connection = URI.create("$baseUrl/0/public/AssetPairs?pair=$encoded")
