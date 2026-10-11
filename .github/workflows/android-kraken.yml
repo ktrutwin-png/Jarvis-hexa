@@ -1,0 +1,24 @@
+name: Android Kraken CI
+on:
+  pull_request:
+    paths: ["android-kraken/**", ".github/workflows/android-kraken.yml"]
+  push:
+    branches: ["android-kraken-app"]
+    paths: ["android-kraken/**"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-kraken
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - run: gradle testDebugUnitTest
+      - run: gradle assembleDebug
