@@ -1,17 +1,22 @@
 """Build reviewable Kraken trade proposals from fresh public market data.
 
-The runner selects EUR markets automatically, combines market quality with
-technical confidence, and never submits a live order.
+The runner selects EUR markets automatically, combines live market quality,
+technical confidence and conservative historical feedback, and never submits
+a live order.
 """
 from __future__ import annotations
 
 from dataclasses import asdict
 import json
+from typing import TYPE_CHECKING
 
 from .kraken_market import fetch_close_prices
 from .market_analysis import analyze_prices
 from .pair_scanner import rank_eur_pairs
 from .risk import suggest_position_eur, validate_risk
+
+if TYPE_CHECKING:
+    from .journal import SignalJournal
 
 
 def build_market_proposal(
@@ -58,12 +63,21 @@ def build_market_proposal(
     }
 
 
+def _signal_side(signal_name: str) -> str | None:
+    if signal_name == "BUY_CANDIDATE":
+        return "buy"
+    if signal_name == "SELL_CANDIDATE":
+        return "sell"
+    return None
+
+
 def build_best_eur_proposals(
     limit: int = 5,
     position_eur: float | None = None,
     scan_multiplier: int = 3,
+    journal: "SignalJournal | None" = None,
 ) -> dict:
-    """Scan EUR markets, analyze OHLC and rank the strongest final candidates."""
+    """Scan EUR markets and rank final candidates using live + historical quality."""
     scan_limit = max(limit * max(scan_multiplier, 1), limit, 1)
     opportunities = rank_eur_pairs(limit=scan_limit)
     proposals: list[dict] = []
@@ -83,6 +97,7 @@ def build_best_eur_proposals(
                     "status": "SKIPPED",
                     "reason": str(error),
                     "opportunity": opportunity.to_dict(),
+                    "history": None,
                     "final_score": 0.0,
                     "live_order_submitted": False,
                 }
@@ -92,9 +107,26 @@ def build_best_eur_proposals(
         opportunity_data = opportunity.to_dict()
         proposal["opportunity"] = opportunity_data
 
+        signal_name = str(proposal["signal"].get("signal") or "")
         confidence = float(proposal["signal"].get("confidence", 0.0))
         market_score = float(opportunity_data.get("opportunity_score", 0.0))
-        proposal["final_score"] = market_score * (confidence / 100.0)
+
+        history = None
+        history_multiplier = 1.0
+        if journal is not None:
+            history = journal.pair_performance(
+                opportunity.pair,
+                side=_signal_side(signal_name),
+            )
+            history_multiplier = float(history.get("ranking_multiplier", 1.0))
+
+        proposal["history"] = history
+        proposal["history_multiplier"] = history_multiplier
+        proposal["final_score"] = (
+            market_score
+            * (confidence / 100.0)
+            * history_multiplier
+        )
         proposals.append(proposal)
 
     proposals.sort(
@@ -113,6 +145,7 @@ def build_best_eur_proposals(
         "requested_limit": limit,
         "markets_scanned": len(opportunities),
         "actionable_candidates": actionable,
+        "uses_historical_feedback": journal is not None,
         "proposals": selected,
         "live_order_submitted": False,
     }
