@@ -1,13 +1,14 @@
-"""Agent coordinator for local and read-only market capabilities."""
+"""Agent coordinator for local market, portfolio and performance capabilities."""
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
+from .journal import SignalJournal
 from .pair_scanner import best_eur_pairs
 from .portfolio import fetch_portfolio_eur
-from .trading_runner import build_best_eur_proposals
 from .tasks import TaskQueue
+from .trading_runner import build_best_eur_proposals
 
 
 class SecurityAgent:
@@ -18,6 +19,7 @@ class SecurityAgent:
             "system": frozenset({"status", "time"}),
             "market": frozenset({"eur_pairs", "signals"}),
             "portfolio": frozenset({"eur_value"}),
+            "performance": frozenset({"summary", "history"}),
         }
 
     def authorize(self, agent, action):
@@ -38,6 +40,9 @@ class SystemAgent:
 
 class MarketAgent:
     name = "market"
+
+    def __init__(self, journal: SignalJournal):
+        self.journal = journal
 
     def run(self, action):
         if action == "eur_pairs":
@@ -60,13 +65,15 @@ class MarketAgent:
             result = build_best_eur_proposals(limit=5)
             rows = []
             for index, item in enumerate(result["proposals"], start=1):
+                journal_id = self.journal.record(item)
                 signal = item.get("signal") or {}
                 rows.append(
                     f"{index}. {item['pair']} | {item['status']} | "
                     f"{signal.get('signal', 'N/A')} | "
                     f"conf {float(signal.get('confidence', 0.0)):.0f}% | "
                     f"€{float(item.get('position_eur', 0.0)):.2f} | "
-                    f"score {float(item.get('final_score', 0.0)):.2f}"
+                    f"score {float(item.get('final_score', 0.0)):.2f} | "
+                    f"id {journal_id[:8]}"
                 )
             return "\n".join(rows) if rows else "Brak kandydatów."
 
@@ -91,17 +98,55 @@ class PortfolioAgent:
         return "\n".join(lines)
 
 
+class PerformanceAgent:
+    name = "performance"
+
+    def __init__(self, journal: SignalJournal):
+        self.journal = journal
+
+    def run(self, action):
+        if action == "summary":
+            data = self.journal.summary()
+            return (
+                f"Zamknięte: {data['closed_count']} | "
+                f"wygrane: {data['wins']} | "
+                f"przegrane: {data['losses']} | "
+                f"skuteczność {data['win_rate_pct']:.1f}% | "
+                f"P&L €{data['pnl_eur']:.2f}"
+            )
+
+        if action == "history":
+            items = self.journal.recent(limit=10)
+            if not items:
+                return "Dziennik sygnałów jest pusty."
+
+            rows = []
+            for item in items:
+                pnl = item.get("pnl_eur")
+                pnl_text = f" | P&L €{float(pnl):.2f}" if pnl is not None else ""
+                rows.append(
+                    f"{item['created']} | {item['pair']} | {item['status']} | "
+                    f"conf {float(item.get('confidence') or 0.0):.0f}%"
+                    f"{pnl_text}"
+                )
+            return "\n".join(rows)
+
+        raise ValueError("Nieznana akcja wyników.")
+
+
 class HeksaCore:
     def __init__(self, data_dir=None):
         self.security = SecurityAgent()
-        self._agents = {
-            "system": SystemAgent(),
-            "market": MarketAgent(),
-            "portfolio": PortfolioAgent(),
-        }
         self.data_dir = Path(data_dir) if data_dir is not None else Path.home() / ".heksa"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.tasks = TaskQueue(self.data_dir / "tasks.sqlite3")
+        self.journal = SignalJournal(self.data_dir / "signals.sqlite3")
+        self._agents = {
+            "system": SystemAgent(),
+            "market": MarketAgent(self.journal),
+            "portfolio": PortfolioAgent(),
+            "performance": PerformanceAgent(self.journal),
+        }
 
     def queue_task(self, agent, action):
         try:
@@ -191,16 +236,27 @@ class HeksaCore:
         if normalized in {"portfolio", "portfel", "balance", "saldo"}:
             return self.dispatch("portfolio", "eur_value")
 
+        if normalized in {"pnl", "performance", "wyniki"}:
+            return self.dispatch("performance", "summary")
+
+        if normalized in {"history", "historia", "journal", "dziennik"}:
+            return self.dispatch("performance", "history")
+
         if normalized in {"hello", "hej"}:
             return "Witaj, szefie. Heksa gotowa."
 
         if normalized in {"help", "pomoc"}:
             return (
-                "Komendy: status, time, markets, signals, portfolio, hello, agents, "
-                "queue status|time|markets, tasks, run-next, cancel <id>, help, exit"
+                "Komendy: status, time, markets, signals, portfolio, pnl, history, "
+                "hello, agents, queue status|time|markets, tasks, run-next, "
+                "cancel <id>, help, exit"
             )
 
         if normalized == "agents":
-            return "Security Agent: aktywny; System Agent: aktywny; Market Agent: aktywny; Portfolio Agent: aktywny."
+            return (
+                "Security Agent: aktywny; System Agent: aktywny; "
+                "Market Agent: aktywny; Portfolio Agent: aktywny; "
+                "Performance Agent: aktywny."
+            )
 
         return "Nieznana komenda. Wpisz help."
