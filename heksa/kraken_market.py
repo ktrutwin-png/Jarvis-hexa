@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 KRAKEN_PUBLIC_BASE = "https://api.kraken.com/0/public"
 KRAKEN_OHLC_API = f"{KRAKEN_PUBLIC_BASE}/OHLC"
 KRAKEN_ASSET_PAIRS_API = f"{KRAKEN_PUBLIC_BASE}/AssetPairs"
-KRAKEN_TICKER_API = f"{KRAKEN_PUBLIC_BASE}/Ticker"
+KRAKEN_TICKER_API = f"{KRAKEN_PUBLIC_BASE}/Ticker"\nKRAKEN_PRE_TRADE_API = f"{KRAKEN_PUBLIC_BASE}/PreTrade"
 
 
 def _public_get(endpoint: str, params: dict | None = None) -> dict:
@@ -123,3 +123,14 @@ def ticker_for_pair(pair_info: dict, tickers: dict[str, dict]) -> dict | None:
             return ticker
 
     return None
+
+
+def fetch_pretrade(symbol: str) -> dict:
+    """Return Kraken aggregated top-of-book levels for one display symbol."""
+    result = _public_get(
+        KRAKEN_PRE_TRADE_API,
+        {"symbol": symbol.strip().upper()},
+    )
+    if not isinstance(result.get("bids"), list) or not isinstance(result.get("asks"), list):
+        raise RuntimeError("Kraken returned no usable order book")
+    return result
