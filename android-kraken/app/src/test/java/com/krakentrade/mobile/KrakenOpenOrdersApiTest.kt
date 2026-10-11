@@ -6,7 +6,9 @@ import org.junit.Test
 
 class KrakenOpenOrdersApiTest {
     private val api = KrakenOpenOrdersApi(
-        KrakenPrivateTransport { KrakenCredentials("key", "eA==") }
+        KrakenPrivateTransport(
+            credentialsProvider = { KrakenCredentials("key", "eA==") }
+        )
     )
 
     @Test fun parsesReferralOrderIdForConditionalChild() {
