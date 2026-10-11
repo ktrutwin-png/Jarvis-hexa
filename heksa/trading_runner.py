@@ -30,6 +30,7 @@ def build_market_proposal(pair: str = "XRPEUR", position_eur: float = 10.0) -> d
         entry=signal.last_price,
         stop_loss=signal.stop_loss,
         take_profit=signal.take_profit,
+        side="buy" if signal.signal == "BUY_CANDIDATE" else "sell",
     )
 
     return {

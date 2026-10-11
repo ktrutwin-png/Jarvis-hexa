@@ -4,6 +4,20 @@ from heksa.market_analysis import analyze_prices
 
 
 class MarketAnalysisTests(unittest.TestCase):
+    def test_rejects_bad_prices(self):
+        for bad in (float("nan"), float("inf"), 0, -1):
+            with self.subTest(price=bad):
+                with self.assertRaises(ValueError):
+                    analyze_prices([100] * 21 + [bad])
+
+    def test_rejects_invalid_settings(self):
+        for settings in ({"fast_window": 0}, {"fast_window": 21},
+                         {"slow_window": 2.5}, {"risk_pct": float("nan")},
+                         {"reward_pct": 1}, {"risk_pct": -0.01}):
+            with self.subTest(settings=settings):
+                with self.assertRaises(ValueError):
+                    analyze_prices([100] * 30, **settings)
+
     def test_uptrend_creates_buy_candidate(self):
         prices = list(range(1, 30))
         result = analyze_prices(prices)
