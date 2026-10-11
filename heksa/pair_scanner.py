@@ -1,0 +1,108 @@
+"""EUR opportunity scanner for Kraken spot markets.
+
+Ranks markets by a transparent opportunity score built from:
+- 24h quote-volume liquidity,
+- 24h price range,
+- current bid/ask spread.
+
+The score is a market-selection heuristic, not a profit guarantee.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from math import log10
+
+from .kraken_market import fetch_spot_pairs, fetch_tickers
+
+
+@dataclass(frozen=True)
+class PairOpportunity:
+    pair: str
+    last_price_eur: float
+    quote_volume_24h_eur: float
+    range_24h_pct: float
+    spread_bps: float
+    opportunity_score: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _float_at(values, index: int, default: float = 0.0) -> float:
+    try:
+        return float(values[index])
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
+def _score_pair(pair: str, ticker: dict) -> PairOpportunity | None:
+    ask = _float_at(ticker.get("a"), 0)
+    bid = _float_at(ticker.get("b"), 0)
+    last = _float_at(ticker.get("c"), 0)
+    volume_24h_base = _float_at(ticker.get("v"), 1)
+    low_24h = _float_at(ticker.get("l"), 1)
+    high_24h = _float_at(ticker.get("h"), 1)
+    vwap_24h = _float_at(ticker.get("p"), 1, last)
+
+    if min(ask, bid, last, low_24h, high_24h) <= 0:
+        return None
+
+    mid = (ask + bid) / 2.0
+    spread_bps = ((ask - bid) / mid) * 10_000 if mid > 0 else 0.0
+    range_pct = ((high_24h - low_24h) / low_24h) * 100.0
+    quote_volume = volume_24h_base * (vwap_24h or last)
+
+    # Reward liquid markets with usable intraday movement while penalizing wide spreads.
+    liquidity_factor = max(1.0, log10(max(quote_volume, 1.0)))
+    spread_penalty = 1.0 + max(spread_bps, 0.0) / 25.0
+    score = (max(range_pct, 0.0) * liquidity_factor) / spread_penalty
+
+    return PairOpportunity(
+        pair=pair,
+        last_price_eur=last,
+        quote_volume_24h_eur=quote_volume,
+        range_24h_pct=range_pct,
+        spread_bps=spread_bps,
+        opportunity_score=score,
+    )
+
+
+def rank_eur_pairs(
+    limit: int = 12,
+    min_quote_volume_eur: float = 50_000.0,
+    max_spread_bps: float = 80.0,
+) -> list[PairOpportunity]:
+    """Return the strongest currently tradeable Kraken EUR markets."""
+    if limit <= 0:
+        return []
+
+    pairs = fetch_spot_pairs("EUR")
+    tickers = fetch_tickers()
+
+    ranked: list[PairOpportunity] = []
+    for pair in pairs:
+        ticker = tickers.get(pair)
+        if ticker is None:
+            # Fallback for API responses that use a compact pair key.
+            compact = pair.replace("/", "")
+            ticker = tickers.get(compact)
+        if ticker is None:
+            continue
+
+        opportunity = _score_pair(pair, ticker)
+        if opportunity is None:
+            continue
+        if opportunity.quote_volume_24h_eur < min_quote_volume_eur:
+            continue
+        if opportunity.spread_bps > max_spread_bps:
+            continue
+
+        ranked.append(opportunity)
+
+    ranked.sort(key=lambda item: item.opportunity_score, reverse=True)
+    return ranked[:limit]
+
+
+def best_eur_pairs(limit: int = 12) -> list[dict]:
+    """JSON-friendly result for UI/agent consumption."""
+    return [item.to_dict() for item in rank_eur_pairs(limit=limit)]
