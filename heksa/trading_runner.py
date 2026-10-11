@@ -11,7 +11,8 @@ import json
 from typing import TYPE_CHECKING
 
 from .execution_quality import assess_execution
-from .kraken_market import fetch_close_prices
+from .indicator_engine import analyze_regime
+from .kraken_market import fetch_close_prices, fetch_ohlcv
 from .market_analysis import analyze_prices
 from .pair_scanner import rank_eur_pairs
 from .risk import performance_size_multiplier, suggest_position_eur, validate_risk
@@ -63,12 +64,45 @@ def build_market_proposal(
             "live_order_submitted": False,
         }
 
+    side = "buy" if signal.signal == "BUY_CANDIDATE" else "sell"
+    regime = analyze_regime(
+        fetch_ohlcv(request_pair, interval=15, limit=100),
+        side=side,
+    )
+
+    if regime.available and (
+        not regime.direction_ok
+        or not regime.volatility_ok
+        or regime.score_multiplier <= 0.0
+    ):
+        return {
+            "pair": display_pair,
+            "api_pair": request_pair,
+            "status": "WAIT",
+            "reason": "regime_filter",
+            "signal": asdict(signal),
+            "confirmation": asdict(confirmation),
+            "regime": regime.to_dict(),
+            "requires_user_approval": False,
+            "live_order_submitted": False,
+        }
+
     if position_eur is not None:
         selected_position_eur = float(position_eur)
     else:
         base_position = suggest_position_eur(signal.confidence)
+        regime_size_multiplier = (
+            min(1.0, max(0.0, regime.score_multiplier))
+            if regime.available
+            else 1.0
+        )
         selected_position_eur = round(
-            max(0.01, base_position * max(0.0, min(1.0, risk_size_multiplier))),
+            max(
+                0.01,
+                base_position
+                * max(0.0, min(1.0, risk_size_multiplier))
+                * regime_size_multiplier,
+            ),
             2,
         )
 
@@ -89,6 +123,7 @@ def build_market_proposal(
         ),
         "signal": asdict(signal),
         "confirmation": asdict(confirmation),
+        "regime": regime.to_dict(),
         "requires_user_approval": True,
         "live_order_submitted": False,
     }
@@ -169,10 +204,14 @@ def build_best_eur_proposals(
 
         proposal["history"] = history
         proposal["history_multiplier"] = history_multiplier
+        regime_data = proposal.get("regime") or {}
+        regime_multiplier = float(regime_data.get("score_multiplier", 1.0))
+        proposal["regime_multiplier"] = regime_multiplier
         proposal["final_score"] = (
             market_score
             * (confidence / 100.0)
             * history_multiplier
+            * regime_multiplier
         )
 
         if proposal.get("status") == "PROPOSAL":
