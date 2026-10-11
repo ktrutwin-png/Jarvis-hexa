@@ -16,8 +16,8 @@ data class KrakenOpenOrder(
 )
 
 interface OpenOrdersGateway {
-    override suspend fun listOpenOrders(): Result<List<KrakenOpenOrder>>
-    override suspend fun findConditionalChild(entryTxid: String, orderType: String): Result<KrakenOpenOrder?>
+    suspend fun listOpenOrders(): Result<List<KrakenOpenOrder>>
+    suspend fun findConditionalChild(entryTxid: String, orderType: String): Result<KrakenOpenOrder?>
 }
 
 class KrakenOpenOrdersApi(
@@ -25,13 +25,13 @@ class KrakenOpenOrdersApi(
 ) : OpenOrdersGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun listOpenOrders(): Result<List<KrakenOpenOrder>> =
+    override suspend fun listOpenOrders(): Result<List<KrakenOpenOrder>> =
         transport.post(
             "/0/private/OpenOrders",
             mapOf("trades" to "false")
         ).flatMap(::parseOpenOrders)
 
-    suspend fun findConditionalChild(
+    override suspend fun findConditionalChild(
         entryTxid: String,
         orderType: String
     ): Result<KrakenOpenOrder?> =
