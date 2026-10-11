@@ -65,16 +65,19 @@ class MarketAgent:
             result = build_best_eur_proposals(limit=5, journal=self.journal)
             rows = []
             for index, item in enumerate(result["proposals"], start=1):
-                journal_id = self.journal.record(item)
                 signal = item.get("signal") or {}
+                journal_text = ""
+                if item.get("status") == "PROPOSAL":
+                    journal_id = self.journal.record(item)
+                    journal_text = f" | id {journal_id[:8]}"
                 rows.append(
                     f"{index}. {item['pair']} | {item['status']} | "
                     f"{signal.get('signal', 'N/A')} | "
                     f"conf {float(signal.get('confidence', 0.0)):.0f}% | "
                     f"€{float(item.get('position_eur', 0.0)):.2f} | "
                     f"hist x{float(item.get('history_multiplier', 1.0)):.2f} | "
-                    f"score {float(item.get('final_score', 0.0)):.2f} | "
-                    f"id {journal_id[:8]}"
+                    f"score {float(item.get('final_score', 0.0)):.2f}"
+                    f"{journal_text}"
                 )
             return "\n".join(rows) if rows else "Brak kandydatów."
 
