@@ -1,47 +1,60 @@
-# Heksa Core
-Lokalny rdzeń Heksy — wersja 0.2.0.
+# NexTrade Android / Heksa Core
 
-## Co działa
-- Koordynator HeksaCore i lokalny System Agent.
-- Security Agent sprawdza każdą akcję przekazywaną agentom według jawnej listy uprawnień.
-- Dziennik decyzji w katalogu użytkownika: `.heksa/audit.jsonl`.
-- Konsola: `status`, `time`, `hello`, `agents`, `help`, `exit`.
-- Trwała kolejka SQLite: `queue status`, `queue time`, `tasks`, `run-next`, `cancel <id>`.
-- Uprawnienia są sprawdzane przy dodaniu zadania i ponownie przed wykonaniem.
-- Zadania zakończone i anulowane nie są wykonywane ponownie.
+NexTrade jest rozwijany **wyłącznie jako aplikacja na Androida**. Rdzeń Heksy odpowiada za analizę rynku, kontrolę bezpieczeństwa i lokalny dziennik operacji.
 
-## Pamięć zadań
-Zadania są zapisywane w `.heksa/tasks.sqlite3` w katalogu użytkownika.
-`run-next` wykonuje jedno oczekujące zadanie. Kolejka obsługuje obecnie tylko
-lokalne akcje `status` i `time`, bez usług zewnętrznych.
-Nie ma jeszcze automatycznego pracownika w tle.
-Po awarii zadanie w stanie `running` nie jest automatycznie powtarzane:
-wynik działania może być nieznany. Programistyczne `interrupt_running()`
-oznacza takie zadania jako `interrupted`; używaj go dopiero po potwierdzeniu,
-że poprzedni pracownik zakończył działanie. Brak automatycznych ponowień
-chroni przed powieleniem przyszłych działań zewnętrznych.
+## Co już działa
 
-Security Agent jest kontrolą na poziomie aplikacji, nie piaskownicą systemu operacyjnego.
-Nie chroni przed złośliwym kodem z dostępem do tego samego procesu lub plików.
-Dziennik jest lokalny i nie ma zabezpieczenia przed modyfikacją.
+- mobilny interfejs Flet przeznaczony na Androida,
+- ekrany: Start, Sygnały, Portfel i Ustawienia,
+- skanowanie aktywnych par kryptowalutowych rozliczanych w EUR,
+- ranking sygnałów z uwzględnieniem jakości rynku, kosztów, płynności, ryzyka i historii wyników,
+- wycena salda Kraken w EUR,
+- szyfrowane przechowywanie kluczy Kraken przez Android Keystore,
+- lokalny dziennik sygnałów, decyzji i wyników,
+- Security Agent kontrolujący dozwolone działania,
+- automatyczne budowanie instalacyjnego APK w GitHub Actions.
 
-## Windows
-Wymagany Python 3.10 lub nowszy. Brak dodatkowych zależności.
-Pobierz repozytorium (Code → Download ZIP), rozpakuj i otwórz `start_windows.bat`.
-Alternatywnie w folderze projektu uruchom `py -3 -m heksa`.
+## Aktualny tryb bezpieczeństwa
 
-## Android / Termux
-W folderze projektu uruchom `python -m heksa`. To konsola, jeszcze nie aplikacja Android.
+Aplikacja analizuje rynek, pokazuje propozycje i odczytuje portfel. **Prawdziwe składanie zleceń jest obecnie wyłączone.** Zostanie uruchomione dopiero po dodaniu pełnego cyklu zlecenia, twardych limitów ryzyka, ochrony przed duplikacją i ręcznego zatwierdzania.
 
-## Testy
-`python -m unittest discover -s tests -v`
+Dla NexTrade należy utworzyć osobny klucz Kraken z minimalnymi uprawnieniami. Nigdy nie wolno włączać prawa do wypłat. Kluczy, haseł i innych sekretów nie umieszczamy w repozytorium ani dziennikach.
 
-## Stan projektu
-To działający fundament lokalny. Nie zawiera jeszcze interfejsu z kulą,
-rozpoznawania głosu, integracji Gemini, poczty, kalendarza, komunikatorów,
-handlu kryptowalutami ani automatycznych aktualizacji i rollbacków agentów.
-Nie działa samoczynnie w tle i nie jest zainstalowany na laptopie użytkownika.
+## Budowanie APK
 
-Kolejne etapy: interfejs, trwały rejestr agentów i wersji, zatwierdzanie
-aktualizacji z rollbackiem, a następnie integracje testowane osobno.
-Nie umieszczaj haseł ani kluczy API w repozytorium.
+Każda zmiana dotycząca aplikacji Android, rdzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Gotowy plik jest publikowany jako artefakt `NexTrade-Android-APK` w GitHub Actions.
+
+Ręczne uruchomienie budowy:
+
+1. Otwórz repozytorium w GitHubie.
+2. Wejdź w **Actions**.
+3. Wybierz **Build Android APK**.
+4. Naciśnij **Run workflow**.
+5. Po zakończeniu pobierz artefakt `NexTrade-Android-APK`.
+
+Lokalne polecenie dla przygotowanego środowiska Flet:
+
+```bash
+flet build apk --verbose
+```
+
+## Struktura
+
+- `android_app/` — interfejs i punkt startowy aplikacji na Androida,
+- `heksa/` — rdzeń, bezpieczeństwo, Kraken, skaner rynku, portfel i dziennik,
+- `tests/` — testy jednostkowe rdzenia,
+- `.github/workflows/android-apk.yml` — automatyczne budowanie APK,
+- `pyproject.toml` — konfiguracja aplikacji i pakowania Androida.
+
+## Najbliższe etapy
+
+1. pełny, bezpieczny cykl zlecenia Kraken,
+2. tryb symulacji i ręczne zatwierdzanie transakcji,
+3. twarde limity straty i awaryjne zatrzymanie,
+4. dane strumieniowe oraz wykrywanie utraty połączenia,
+5. rzeczywisty P&L uwzględniający prowizję i cenę wykonania,
+6. powiadomienia Android i poranny raport,
+7. niezawodne działanie w tle,
+8. podpisywanie wersji instalacyjnych i bezpieczne aktualizacje.
+
+Projekt nie jest już rozwijany dla Windowsa. Cały interfejs, pakowanie, bezpieczeństwo urządzenia i optymalizacja wydajności są podporządkowane Androidowi.
