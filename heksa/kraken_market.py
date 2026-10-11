@@ -12,7 +12,8 @@ from urllib.request import Request, urlopen
 KRAKEN_PUBLIC_BASE = "https://api.kraken.com/0/public"
 KRAKEN_OHLC_API = f"{KRAKEN_PUBLIC_BASE}/OHLC"
 KRAKEN_ASSET_PAIRS_API = f"{KRAKEN_PUBLIC_BASE}/AssetPairs"
-KRAKEN_TICKER_API = f"{KRAKEN_PUBLIC_BASE}/Ticker"\nKRAKEN_PRE_TRADE_API = f"{KRAKEN_PUBLIC_BASE}/PreTrade"
+KRAKEN_TICKER_API = f"{KRAKEN_PUBLIC_BASE}/Ticker"
+KRAKEN_PRE_TRADE_API = f"{KRAKEN_PUBLIC_BASE}/PreTrade"
 
 
 def _public_get(endpoint: str, params: dict | None = None) -> dict:
