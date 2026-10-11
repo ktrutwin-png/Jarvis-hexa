@@ -19,7 +19,7 @@ class SecurityAgent:
             "system": frozenset({"status", "time"}),
             "market": frozenset({"eur_pairs", "signals"}),
             "portfolio": frozenset({"eur_value"}),
-            "performance": frozenset({"summary", "history"}),
+            "performance": frozenset({"summary", "history", "close"}),
         }
 
     def authorize(self, agent, action):
@@ -179,6 +179,20 @@ class HeksaCore:
         with (self.data_dir / "audit.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
+    def record_outcome(self, signal_id, exit_eur):
+        try:
+            self.security.authorize("performance", "close")
+        except PermissionError:
+            self._audit("performance", "close", "blocked")
+            raise
+        self._audit("performance", "close", "authorized")
+        result = self.journal.close(signal_id, float(exit_eur))
+        self._audit("performance", "close", "completed")
+        return (
+            f"{result['signal_id'][:8]} | {result['result']} | "
+            f"P&L €{result['pnl_eur']:.2f}"
+        )
+
     def dispatch(self, agent, action):
         try:
             self.security.authorize(agent, action)
@@ -215,6 +229,14 @@ class HeksaCore:
         if normalized == "run-next":
             return self.run_next_task()
 
+        if parts and parts[0] == "close":
+            if len(parts) != 3:
+                return "Użycie: close <pełne_id_sygnalu> <cena_wyjścia_EUR>"
+            try:
+                return self.record_outcome(parts[1], float(parts[2].replace(",", ".")))
+            except ValueError as error:
+                return f"Nie można zamknąć wpisu: {error}"
+
         if parts and parts[0] == "cancel":
             if len(parts) != 2:
                 return "Użycie: cancel <id>"
@@ -247,7 +269,7 @@ class HeksaCore:
 
         if normalized in {"help", "pomoc"}:
             return (
-                "Komendy: status, time, markets, signals, portfolio, pnl, history, "
+                "Komendy: status, time, markets, signals, portfolio, pnl, history, close, "
                 "hello, agents, queue status|time|markets, tasks, run-next, "
                 "cancel <id>, help, exit"
             )
