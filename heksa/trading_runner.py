@@ -11,12 +11,12 @@ import json
 from .kraken_market import fetch_close_prices
 from .market_analysis import analyze_prices
 from .pair_scanner import rank_eur_pairs
-from .risk import validate_risk
+from .risk import suggest_position_eur, validate_risk
 
 
 def build_market_proposal(
     pair: str = "XRP/EUR",
-    position_eur: float = 10.0,
+    position_eur: float | None = None,
     api_pair: str | None = None,
 ) -> dict:
     display_pair = pair.strip().upper()
@@ -34,8 +34,14 @@ def build_market_proposal(
             "live_order_submitted": False,
         }
 
+    selected_position_eur = (
+        float(position_eur)
+        if position_eur is not None
+        else suggest_position_eur(signal.confidence)
+    )
+
     validate_risk(
-        position_eur=position_eur,
+        position_eur=selected_position_eur,
         entry=signal.last_price,
         stop_loss=signal.stop_loss,
         take_profit=signal.take_profit,
@@ -45,7 +51,7 @@ def build_market_proposal(
         "pair": display_pair,
         "api_pair": request_pair,
         "status": "PROPOSAL",
-        "position_eur": position_eur,
+        "position_eur": selected_position_eur,
         "signal": asdict(signal),
         "requires_user_approval": True,
         "live_order_submitted": False,
@@ -54,7 +60,7 @@ def build_market_proposal(
 
 def build_best_eur_proposals(
     limit: int = 5,
-    position_eur: float = 10.0,
+    position_eur: float | None = None,
     scan_multiplier: int = 3,
 ) -> dict:
     """Scan EUR markets, analyze OHLC and rank the strongest final candidates."""
