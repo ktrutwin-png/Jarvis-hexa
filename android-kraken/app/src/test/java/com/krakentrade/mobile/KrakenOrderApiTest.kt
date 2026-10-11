@@ -6,7 +6,9 @@ import org.junit.Test
 
 class KrakenOrderApiTest {
     private fun api() = KrakenOrderApi(
-        KrakenPrivateTransport { KrakenCredentials("key", "eA==") }
+        KrakenPrivateTransport(
+            credentialsProvider = { KrakenCredentials("key", "eA==") }
+        )
     )
 
     @Test fun parsesAddOrderTxid() {
