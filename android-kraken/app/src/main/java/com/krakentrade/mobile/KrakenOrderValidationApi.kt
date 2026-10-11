@@ -19,6 +19,9 @@ class KrakenOrderValidationApi(
                 "cl_ord_id" to proposal.id.take(18),
                 "validate" to "true"
             )
+        ).fold(
+            onSuccess = { KrakenResponse.requireSuccess(it) },
+            onFailure = { Result.failure(it) }
         )
     }
 
