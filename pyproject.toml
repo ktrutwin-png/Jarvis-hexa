@@ -5,8 +5,8 @@ description = "NexTrade - bezpieczny asystent rynku kryptowalut na Androida"
 requires-python = ">=3.10"
 authors = [{name = "NexTrade"}]
 dependencies = [
-    "flet==0.86.5",
-    "flet-secure-storage==0.86.5",
+    "flet==1.0.4",
+    "flet-secure-storage==1.0.4",
     "krakenex>=2.2.2,<3",
     "talipp>=2.7,<3",
 ]
@@ -33,7 +33,6 @@ app.exclude = [
     "dist",
     "tests",
     "__pycache__",
-    "start_windows.bat",
 ]
 
 [tool.flet.splash]
