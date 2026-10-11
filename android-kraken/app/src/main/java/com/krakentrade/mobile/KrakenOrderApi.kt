@@ -21,9 +21,17 @@ data class KrakenOrderSnapshot(
         get() = status == KrakenOrderStatus.CLOSED && executedVolume > 0.0
 }
 
+interface KrakenOrderGateway {
+    override suspend fun validateEntryWithStopLoss(proposal: ExecutableProposal): Result<String>
+    override suspend fun placeEntryWithStopLoss(proposal: ExecutableProposal): Result<String>
+    override suspend fun placeTakeProfit(proposal: ExecutableProposal, volume: Double): Result<String>
+    override suspend fun queryOrder(txid: String): Result<KrakenOrderSnapshot>
+    override suspend fun cancelOrder(txid: String): Result<Unit>
+}
+
 class KrakenOrderApi(
     private val transport: KrakenPrivateTransport
-) {
+) : KrakenOrderGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun validateEntryWithStopLoss(proposal: ExecutableProposal): Result<String> =
