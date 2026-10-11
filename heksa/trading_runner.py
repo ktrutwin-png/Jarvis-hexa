@@ -1,7 +1,7 @@
 """Build reviewable Kraken trade proposals from fresh public market data.
 
-The runner can select the strongest EUR markets automatically.
-It never submits a live order.
+The runner selects EUR markets automatically, combines market quality with
+technical confidence, and never submits a live order.
 """
 from __future__ import annotations
 
@@ -55,9 +55,11 @@ def build_market_proposal(
 def build_best_eur_proposals(
     limit: int = 5,
     position_eur: float = 10.0,
+    scan_multiplier: int = 3,
 ) -> dict:
-    """Scan Kraken EUR markets and build proposals for the strongest candidates."""
-    opportunities = rank_eur_pairs(limit=max(limit, 1))
+    """Scan EUR markets, analyze OHLC and rank the strongest final candidates."""
+    scan_limit = max(limit * max(scan_multiplier, 1), limit, 1)
+    opportunities = rank_eur_pairs(limit=scan_limit)
     proposals: list[dict] = []
 
     for opportunity in opportunities:
@@ -75,19 +77,37 @@ def build_best_eur_proposals(
                     "status": "SKIPPED",
                     "reason": str(error),
                     "opportunity": opportunity.to_dict(),
+                    "final_score": 0.0,
                     "live_order_submitted": False,
                 }
             )
             continue
 
-        proposal["opportunity"] = opportunity.to_dict()
+        opportunity_data = opportunity.to_dict()
+        proposal["opportunity"] = opportunity_data
+
+        confidence = float(proposal["signal"].get("confidence", 0.0))
+        market_score = float(opportunity_data.get("opportunity_score", 0.0))
+        proposal["final_score"] = market_score * (confidence / 100.0)
         proposals.append(proposal)
+
+    proposals.sort(
+        key=lambda item: (
+            item.get("status") == "PROPOSAL",
+            float(item.get("final_score", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    selected = proposals[:limit]
+    actionable = sum(item.get("status") == "PROPOSAL" for item in selected)
 
     return {
         "quote_currency": "EUR",
         "requested_limit": limit,
-        "markets_found": len(opportunities),
-        "proposals": proposals,
+        "markets_scanned": len(opportunities),
+        "actionable_candidates": actionable,
+        "proposals": selected,
         "live_order_submitted": False,
     }
 
