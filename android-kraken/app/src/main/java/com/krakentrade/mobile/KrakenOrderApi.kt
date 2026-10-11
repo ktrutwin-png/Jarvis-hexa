@@ -57,7 +57,7 @@ class KrakenOrderApi(
         return transport.post("/0/private/AddOrder", params).flatMap(::parseAddOrderTxId)
     }
 
-    suspend fun queryOrder(txid: String): Result<KrakenOrderSnapshot> {
+    override suspend fun queryOrder(txid: String): Result<KrakenOrderSnapshot> {
         require(txid.isNotBlank()) { "txid nie może być pusty" }
         return transport.post(
             "/0/private/QueryOrders",
@@ -65,7 +65,7 @@ class KrakenOrderApi(
         ).flatMap { parseOrderSnapshot(txid, it) }
     }
 
-    suspend fun cancelOrder(txid: String): Result<Unit> {
+    override suspend fun cancelOrder(txid: String): Result<Unit> {
         require(txid.isNotBlank()) { "txid nie może być pusty" }
         return transport.post(
             "/0/private/CancelOrder",
