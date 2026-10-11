@@ -7,7 +7,7 @@ on:
     paths: ["android-kraken/**", ".github/workflows/android-kraken.yml"]
   push:
     branches: ["android-kraken-app"]
-    paths: ["android-kraken/**"]
+    paths: ["android-kraken/**", ".github/workflows/android-kraken.yml"]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -25,3 +25,9 @@ jobs:
           gradle-version: "8.9"
       - run: gradle testDebugUnitTest
       - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kraken-trade-debug-apk
+          path: android-kraken/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
