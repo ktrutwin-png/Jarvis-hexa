@@ -77,7 +77,7 @@ private fun CredentialScreen(
             modifier = Modifier.padding(padding).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("Kraken Trade", style = MaterialTheme.typography.headlineMedium)
+            Text("NexTrade", style = MaterialTheme.typography.headlineMedium)
             Text("Połączenie API", style = MaterialTheme.typography.titleLarge)
             Text("Klucze są szyfrowane kluczem z Android Keystore i nie są zapisywane w repozytorium.")
 
@@ -133,7 +133,7 @@ private fun TradingScreen(
             modifier = Modifier.padding(padding).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Kraken Trade", style = MaterialTheme.typography.headlineMedium)
+            Text("NexTrade", style = MaterialTheme.typography.headlineMedium)
             Text("Tryb: WALIDACJA — bez realnych zleceń")
             Text("Realne wykonanie pozostaje zablokowane, dopóki pełna ochrona SL/TP i monitoring nie przejdą testów.")
 
