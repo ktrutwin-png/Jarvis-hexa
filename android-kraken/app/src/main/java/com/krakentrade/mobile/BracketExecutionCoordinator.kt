@@ -9,7 +9,7 @@ package com.krakentrade.mobile
  * without an approval already consumed by TradeExecutor.
  */
 class BracketExecutionCoordinator(
-    private val orders: KrakenOrderApi
+    private val orders: KrakenOrderGateway
 ) {
     suspend fun preflight(proposal: ExecutableProposal): Result<Unit> =
         orders.validateEntryWithStopLoss(proposal).map { Unit }
