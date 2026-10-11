@@ -34,7 +34,7 @@ jobs:
           cache: pip
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -42,7 +42,7 @@ jobs:
       - name: Install project and Flet CLI
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "flet[cli]>=1.0.4,<2" -r requirements.txt
+          python -m pip install "flet[cli]==0.86.5" -r requirements.txt
 
       - name: Compile Python sources
         run: python -m compileall -q android_app heksa
