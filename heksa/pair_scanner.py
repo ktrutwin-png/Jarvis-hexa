@@ -23,6 +23,8 @@ class PairOpportunity:
     quote_volume_24h_eur: float
     range_24h_pct: float
     spread_bps: float
+    taker_fee_bps: float
+    estimated_round_trip_cost_bps: float
     opportunity_score: float
 
     def to_dict(self) -> dict:
@@ -34,6 +36,18 @@ def _float_at(values, index: int, default: float = 0.0) -> float:
         return float(values[index])
     except (TypeError, ValueError, IndexError):
         return default
+
+
+def _conservative_taker_fee_bps(pair_info: dict) -> float:
+    """Use the highest published taker-fee tier as a conservative fallback."""
+    fees = pair_info.get("fees") or []
+    percentages: list[float] = []
+    for row in fees:
+        try:
+            percentages.append(float(row[1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return max(percentages, default=0.40) * 100.0
 
 
 def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | None:
@@ -52,10 +66,12 @@ def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | N
     spread_bps = ((ask - bid) / mid) * 10_000 if mid > 0 else 0.0
     range_pct = ((high_24h - low_24h) / low_24h) * 100.0
     quote_volume = volume_24h_base * (vwap_24h or last)
+    taker_fee_bps = _conservative_taker_fee_bps(pair_info)
+    estimated_round_trip_cost_bps = max(spread_bps, 0.0) + (2.0 * taker_fee_bps)
 
     liquidity_factor = max(1.0, log10(max(quote_volume, 1.0)))
-    spread_penalty = 1.0 + max(spread_bps, 0.0) / 25.0
-    score = (max(range_pct, 0.0) * liquidity_factor) / spread_penalty
+    cost_penalty = 1.0 + estimated_round_trip_cost_bps / 50.0
+    score = (max(range_pct, 0.0) * liquidity_factor) / cost_penalty
 
     return PairOpportunity(
         pair=pair,
@@ -64,6 +80,8 @@ def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | N
         quote_volume_24h_eur=quote_volume,
         range_24h_pct=range_pct,
         spread_bps=spread_bps,
+        taker_fee_bps=taker_fee_bps,
+        estimated_round_trip_cost_bps=estimated_round_trip_cost_bps,
         opportunity_score=score,
     )
 
