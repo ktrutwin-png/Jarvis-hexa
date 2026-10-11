@@ -73,7 +73,7 @@ class PortfolioAgent:
             )
         if snapshot["unpriced"]:
             lines.append(f"Bez wyceny EUR: {len(snapshot['unpriced'])}")
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
 
 class HeksaCore:
