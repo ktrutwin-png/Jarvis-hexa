@@ -21,39 +21,28 @@ concurrency:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Build Android APK
+        id: build
+        uses: flet-dev/flet-build-action@v1
         with:
-          python-version: "3.12"
-          cache: pip
+          target: apk
+          runner-python-version: "3.12"
+          bundled-python-version: "3.12"
+          build-number: ${{ github.run_number }}
+          cache: true
+          extra-args: "--verbose"
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Install project and Flet CLI
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "flet[cli]==0.86.5" -r requirements.txt
-
-      - name: Compile Python sources
-        run: python -m compileall -q android_app heksa
-
-      - name: Build release APK
-        run: flet build apk --verbose
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Upload APK bundle
+        uses: actions/upload-artifact@v7
         with:
           name: NexTrade-Android-APK
-          path: build/**/*.apk
+          path: ${{ steps.build.outputs.archive-path }}
+          archive: false
           if-no-files-found: error
           retention-days: 14
