@@ -13,9 +13,13 @@ import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
+interface MarketDataGateway {
+    override suspend fun fetchOhlc(pair: String, intervalMinutes: Int = 5): Result<List<Candle>>
+}
+
 class KrakenPublicMarketApi(
     private val baseUrl: String = "https://api.kraken.com"
-) {
+) : MarketDataGateway {
     private val json = Json { ignoreUnknownKeys = true }
     private val supportedIntervals = setOf(1, 5, 15, 30, 60, 240, 1440, 10080, 21600)
 
