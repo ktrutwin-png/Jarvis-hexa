@@ -151,6 +151,29 @@ def build_best_eur_proposals(
             * history_multiplier
         )
 
+        if proposal.get("status") == "PROPOSAL":
+            entry = float(proposal["signal"].get("last_price", 0.0))
+            target = float(proposal["signal"].get("take_profit", entry))
+            reward_bps = (
+                abs(target - entry) / entry * 10_000.0
+                if entry > 0
+                else 0.0
+            )
+            spread_bps = float(opportunity_data.get("spread_bps", 0.0))
+            cost_efficiency = (
+                reward_bps / max(spread_bps, 0.1)
+                if reward_bps > 0
+                else 0.0
+            )
+            proposal["reward_bps"] = reward_bps
+            proposal["cost_efficiency"] = cost_efficiency
+
+            if cost_efficiency < 4.0:
+                proposal["status"] = "FILTERED"
+                proposal["reason"] = "spread_cost_too_high"
+                proposal["requires_user_approval"] = False
+                proposal["final_score"] = 0.0
+
         if journal is not None and proposal.get("status") == "PROPOSAL":
             gate = journal.signal_gate(
                 opportunity.pair,
