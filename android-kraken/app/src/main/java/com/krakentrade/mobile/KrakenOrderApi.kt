@@ -22,11 +22,11 @@ data class KrakenOrderSnapshot(
 }
 
 interface KrakenOrderGateway {
-    override suspend fun validateEntryWithStopLoss(proposal: ExecutableProposal): Result<String>
-    override suspend fun placeEntryWithStopLoss(proposal: ExecutableProposal): Result<String>
-    override suspend fun placeTakeProfit(proposal: ExecutableProposal, volume: Double): Result<String>
-    override suspend fun queryOrder(txid: String): Result<KrakenOrderSnapshot>
-    override suspend fun cancelOrder(txid: String): Result<Unit>
+    suspend fun validateEntryWithStopLoss(proposal: ExecutableProposal): Result<String>
+    suspend fun placeEntryWithStopLoss(proposal: ExecutableProposal): Result<String>
+    suspend fun placeTakeProfit(proposal: ExecutableProposal, volume: Double): Result<String>
+    suspend fun queryOrder(txid: String): Result<KrakenOrderSnapshot>
+    suspend fun cancelOrder(txid: String): Result<Unit>
 }
 
 class KrakenOrderApi(
@@ -34,13 +34,13 @@ class KrakenOrderApi(
 ) : KrakenOrderGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun validateEntryWithStopLoss(proposal: ExecutableProposal): Result<String> =
+    override suspend fun validateEntryWithStopLoss(proposal: ExecutableProposal): Result<String> =
         addEntry(proposal, validateOnly = true)
 
-    suspend fun placeEntryWithStopLoss(proposal: ExecutableProposal): Result<String> =
+    override suspend fun placeEntryWithStopLoss(proposal: ExecutableProposal): Result<String> =
         addEntry(proposal, validateOnly = false)
 
-    suspend fun placeTakeProfit(
+    override suspend fun placeTakeProfit(
         proposal: ExecutableProposal,
         volume: Double
     ): Result<String> {
