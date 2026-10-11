@@ -183,18 +183,24 @@ def build_best_eur_proposals(
                 if entry > 0
                 else 0.0
             )
-            spread_bps = float(opportunity_data.get("spread_bps", 0.0))
+            total_cost_bps = float(
+                opportunity_data.get(
+                    "estimated_round_trip_cost_bps",
+                    opportunity_data.get("spread_bps", 0.0),
+                )
+            )
             cost_efficiency = (
-                reward_bps / max(spread_bps, 0.1)
+                reward_bps / max(total_cost_bps, 0.1)
                 if reward_bps > 0
                 else 0.0
             )
             proposal["reward_bps"] = reward_bps
+            proposal["estimated_round_trip_cost_bps"] = total_cost_bps
             proposal["cost_efficiency"] = cost_efficiency
 
-            if cost_efficiency < 4.0:
+            if cost_efficiency < 2.0:
                 proposal["status"] = "FILTERED"
-                proposal["reason"] = "spread_cost_too_high"
+                proposal["reason"] = "total_trading_cost_too_high"
                 proposal["requires_user_approval"] = False
                 proposal["final_score"] = 0.0
 
