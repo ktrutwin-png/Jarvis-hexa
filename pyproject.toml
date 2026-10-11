@@ -1,0 +1,49 @@
+[project]
+name = "nextrade-android"
+version = "0.1.0"
+description = "NexTrade - bezpieczny asystent rynku kryptowalut na Androida"
+requires-python = ">=3.10"
+authors = [{name = "NexTrade"}]
+dependencies = [
+    "flet>=0.86,<1",
+    "flet-secure-storage>=0.1,<1",
+    "krakenex>=2.2.2,<3",
+    "talipp>=2.7,<3",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["heksa*", "android_app*"]
+
+[tool.flet]
+org = "com.heksa"
+product = "NexTrade"
+company = "Heksa"
+build_number = 1
+app.module = "android_app.main"
+app.path = "."
+app.exclude = [
+    ".git",
+    ".github",
+    ".venv",
+    "build",
+    "dist",
+    "tests",
+    "__pycache__",
+    "start_windows.bat",
+]
+
+[tool.flet.splash]
+color = "#071021"
+dark_color = "#071021"
+android = true
+
+[tool.flet.android]
+split_per_abi = false
+legacy_packaging = false
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
