@@ -143,6 +143,66 @@ class SignalJournal:
             "result": result,
         }
 
+    def signal_gate(
+        self,
+        pair: str,
+        side: str,
+        cooldown_minutes: int = 45,
+        max_daily_per_pair: int = 3,
+    ) -> dict:
+        """Prevent repeated alerts for the same market move.
+
+        The gate is intentionally conservative: the same pair/side must cool down,
+        and a single market cannot dominate the whole day.
+        """
+        normalized_pair = pair.strip().upper()
+        normalized_side = side.strip().lower()
+        if normalized_side not in {"buy", "sell"}:
+            return {"allowed": False, "reason": "invalid_side"}
+
+        now = datetime.now(timezone.utc)
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        with self._connect() as db:
+            latest = db.execute(
+                """SELECT created
+                   FROM signals
+                   WHERE pair=? AND side=? AND status='PROPOSAL'
+                   ORDER BY created DESC
+                   LIMIT 1""",
+                (normalized_pair, normalized_side),
+            ).fetchone()
+
+            daily_count = db.execute(
+                """SELECT COUNT(*) AS count
+                   FROM signals
+                   WHERE pair=? AND status='PROPOSAL' AND created>=?""",
+                (normalized_pair, day_start.isoformat()),
+            ).fetchone()["count"]
+
+        if int(daily_count) >= max_daily_per_pair:
+            return {
+                "allowed": False,
+                "reason": "daily_pair_limit",
+                "daily_count": int(daily_count),
+            }
+
+        if latest is not None:
+            created = datetime.fromisoformat(latest["created"])
+            elapsed_minutes = (now - created).total_seconds() / 60.0
+            if elapsed_minutes < cooldown_minutes:
+                return {
+                    "allowed": False,
+                    "reason": "cooldown",
+                    "minutes_remaining": round(cooldown_minutes - elapsed_minutes, 1),
+                }
+
+        return {
+            "allowed": True,
+            "reason": "ok",
+            "daily_count": int(daily_count),
+        }
+
     def pair_performance(self, pair: str, side: str | None = None) -> dict:
         """Return conservative historical quality stats for one market/side.
 
