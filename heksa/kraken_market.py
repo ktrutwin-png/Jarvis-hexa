@@ -5,6 +5,8 @@ Uses Kraken's public REST endpoints only. No private credentials are required.
 from __future__ import annotations
 
 import json
+import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -15,10 +17,23 @@ KRAKEN_ASSET_PAIRS_API = f"{KRAKEN_PUBLIC_BASE}/AssetPairs"
 KRAKEN_TICKER_API = f"{KRAKEN_PUBLIC_BASE}/Ticker"
 KRAKEN_PRE_TRADE_API = f"{KRAKEN_PUBLIC_BASE}/PreTrade"
 
+_CACHE: dict[str, tuple[float, dict]] = {}
 
-def _public_get(endpoint: str, params: dict | None = None) -> dict:
+
+def _public_get(
+    endpoint: str,
+    params: dict | None = None,
+    cache_ttl: float = 0.0,
+    retries: int = 2,
+) -> dict:
     query = urlencode(params or {})
     url = f"{endpoint}?{query}" if query else endpoint
+    now = time.monotonic()
+
+    cached = _CACHE.get(url)
+    if cached and cache_ttl > 0 and now - cached[0] <= cache_ttl:
+        return cached[1]
+
     request = Request(
         url,
         headers={
@@ -27,24 +42,54 @@ def _public_get(endpoint: str, params: dict | None = None) -> dict:
         },
     )
 
-    with urlopen(request, timeout=12) as response:
-        payload = json.load(response)
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            with urlopen(request, timeout=12) as response:
+                payload = json.load(response)
 
-    errors = payload.get("error") or []
-    if errors:
-        raise RuntimeError("; ".join(errors))
+            errors = payload.get("error") or []
+            if errors:
+                message = "; ".join(errors)
+                if "Rate limit" in message and attempt < retries:
+                    time.sleep(1.0 + attempt)
+                    continue
+                raise RuntimeError(message)
 
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        raise RuntimeError("Kraken returned no usable result")
+            result = payload.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError("Kraken returned no usable result")
 
-    return result
+            if cache_ttl > 0:
+                _CACHE[url] = (time.monotonic(), result)
+            return result
+
+        except HTTPError as error:
+            last_error = error
+            if error.code == 429 and attempt < retries:
+                retry_after = error.headers.get("Retry-After")
+                try:
+                    delay = max(1.0, float(retry_after))
+                except (TypeError, ValueError):
+                    delay = 1.0 + attempt
+                time.sleep(delay)
+                continue
+            raise RuntimeError(f"Kraken HTTP error: {error.code}") from error
+        except URLError as error:
+            last_error = error
+            if attempt < retries:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise RuntimeError(f"Kraken network error: {error.reason}") from error
+
+    raise RuntimeError("Kraken request failed") from last_error
 
 
 def fetch_close_prices(pair: str, interval: int = 5, limit: int = 100) -> list[float]:
     result = _public_get(
         KRAKEN_OHLC_API,
         {"pair": pair.strip().upper(), "interval": interval},
+        cache_ttl=20.0,
     )
 
     series = next((value for key, value in result.items() if key != "last"), None)
@@ -66,6 +111,7 @@ def fetch_spot_pairs(quote: str = "EUR") -> dict[str, dict]:
     pairs = _public_get(
         KRAKEN_ASSET_PAIRS_API,
         {"assetVersion": 1, "aclass_base": "currency"},
+        cache_ttl=300.0,
     )
 
     selected: dict[str, dict] = {}
@@ -100,7 +146,11 @@ def fetch_spot_pairs(quote: str = "EUR") -> dict[str, dict]:
 
 def fetch_tickers() -> dict[str, dict]:
     """Return current ticker information for tradeable spot markets."""
-    return _public_get(KRAKEN_TICKER_API, {"assetVersion": 1})
+    return _public_get(
+        KRAKEN_TICKER_API,
+        {"assetVersion": 1},
+        cache_ttl=10.0,
+    )
 
 
 def ticker_for_pair(pair_info: dict, tickers: dict[str, dict]) -> dict | None:
@@ -131,6 +181,7 @@ def fetch_pretrade(symbol: str) -> dict:
     result = _public_get(
         KRAKEN_PRE_TRADE_API,
         {"symbol": symbol.strip().upper()},
+        cache_ttl=1.0,
     )
     if not isinstance(result.get("bids"), list) or not isinstance(result.get("asks"), list):
         raise RuntimeError("Kraken returned no usable order book")
