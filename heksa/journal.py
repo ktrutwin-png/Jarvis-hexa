@@ -204,6 +204,60 @@ class SignalJournal:
             "ranking_multiplier": multiplier,
         }
 
+    def recent_performance(self, limit: int = 10) -> dict:
+        """Summarize the most recent closed outcomes for drawdown-aware sizing."""
+        safe_limit = max(1, min(int(limit), 100))
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT
+                    o.result,
+                    o.pnl_eur,
+                    s.position_eur
+                   FROM outcomes o
+                   JOIN signals s ON s.id = o.signal_id
+                   ORDER BY o.closed DESC
+                   LIMIT ?""",
+                (safe_limit,),
+            ).fetchall()
+
+        if not rows:
+            return {
+                "closed_count": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate_pct": 0.0,
+                "pnl_eur": 0.0,
+                "avg_return_pct": 0.0,
+                "consecutive_losses": 0,
+            }
+
+        wins = sum(row["result"] == "win" for row in rows)
+        losses = sum(row["result"] == "loss" for row in rows)
+        pnl_eur = sum(float(row["pnl_eur"] or 0.0) for row in rows)
+
+        returns = []
+        for row in rows:
+            position = float(row["position_eur"] or 0.0)
+            if position > 0:
+                returns.append(float(row["pnl_eur"] or 0.0) / position * 100.0)
+
+        consecutive_losses = 0
+        for row in rows:
+            if row["result"] != "loss":
+                break
+            consecutive_losses += 1
+
+        closed = len(rows)
+        return {
+            "closed_count": closed,
+            "wins": wins,
+            "losses": losses,
+            "win_rate_pct": wins / closed * 100.0,
+            "pnl_eur": pnl_eur,
+            "avg_return_pct": sum(returns) / len(returns) if returns else 0.0,
+            "consecutive_losses": consecutive_losses,
+        }
+
     def summary(self) -> dict:
         with self._connect() as db:
             row = db.execute(
