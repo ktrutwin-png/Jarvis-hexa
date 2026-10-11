@@ -85,6 +85,41 @@ def _public_get(
     raise RuntimeError("Kraken request failed") from last_error
 
 
+def fetch_ohlcv(pair: str, interval: int = 5, limit: int = 100) -> list[dict]:
+    """Return normalized OHLCV candles from Kraken public market data."""
+    result = _public_get(
+        KRAKEN_OHLC_API,
+        {"pair": pair.strip().upper(), "interval": interval},
+        cache_ttl=20.0,
+    )
+
+    series = next((value for key, value in result.items() if key != "last"), None)
+    if not series:
+        raise RuntimeError("Kraken returned no OHLC data")
+
+    candles: list[dict] = []
+    for candle in series[-limit:]:
+        try:
+            candles.append(
+                {
+                    "time": int(float(candle[0])),
+                    "open": float(candle[1]),
+                    "high": float(candle[2]),
+                    "low": float(candle[3]),
+                    "close": float(candle[4]),
+                    "vwap": float(candle[5]),
+                    "volume": float(candle[6]),
+                    "count": int(candle[7]),
+                }
+            )
+        except (TypeError, ValueError, IndexError):
+            continue
+
+    if not candles:
+        raise RuntimeError("Kraken returned no usable OHLC candles")
+    return candles
+
+
 def fetch_close_prices(pair: str, interval: int = 5, limit: int = 100) -> list[float]:
     result = _public_get(
         KRAKEN_OHLC_API,
