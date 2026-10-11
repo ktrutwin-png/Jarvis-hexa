@@ -16,7 +16,9 @@ class KrakenAccountApiTest {
           }
         }"""
         val status = KrakenAccountApi(
-            KrakenPrivateTransport { KrakenCredentials("x", "eA==") }
+            KrakenPrivateTransport(
+                credentialsProvider = { KrakenCredentials("x", "eA==") }
+            )
         ).parseKeyInfo(raw).getOrThrow()
         assertTrue(status.canModifyTrades)
         assertFalse(status.permissions.contains("withdraw-funds"))
