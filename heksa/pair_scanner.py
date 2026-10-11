@@ -12,12 +12,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from math import log10
 
-from .kraken_market import fetch_spot_pairs, fetch_tickers
+from .kraken_market import fetch_spot_pairs, fetch_tickers, ticker_for_pair
 
 
 @dataclass(frozen=True)
 class PairOpportunity:
     pair: str
+    api_pair: str
     last_price_eur: float
     quote_volume_24h_eur: float
     range_24h_pct: float
@@ -35,7 +36,7 @@ def _float_at(values, index: int, default: float = 0.0) -> float:
         return default
 
 
-def _score_pair(pair: str, ticker: dict) -> PairOpportunity | None:
+def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | None:
     ask = _float_at(ticker.get("a"), 0)
     bid = _float_at(ticker.get("b"), 0)
     last = _float_at(ticker.get("c"), 0)
@@ -52,13 +53,13 @@ def _score_pair(pair: str, ticker: dict) -> PairOpportunity | None:
     range_pct = ((high_24h - low_24h) / low_24h) * 100.0
     quote_volume = volume_24h_base * (vwap_24h or last)
 
-    # Reward liquid markets with usable intraday movement while penalizing wide spreads.
     liquidity_factor = max(1.0, log10(max(quote_volume, 1.0)))
     spread_penalty = 1.0 + max(spread_bps, 0.0) / 25.0
     score = (max(range_pct, 0.0) * liquidity_factor) / spread_penalty
 
     return PairOpportunity(
         pair=pair,
+        api_pair=str(pair_info.get("_altname") or pair_info.get("_api_name") or pair).upper(),
         last_price_eur=last,
         quote_volume_24h_eur=quote_volume,
         range_24h_pct=range_pct,
@@ -80,16 +81,12 @@ def rank_eur_pairs(
     tickers = fetch_tickers()
 
     ranked: list[PairOpportunity] = []
-    for pair in pairs:
-        ticker = tickers.get(pair)
-        if ticker is None:
-            # Fallback for API responses that use a compact pair key.
-            compact = pair.replace("/", "")
-            ticker = tickers.get(compact)
+    for pair, pair_info in pairs.items():
+        ticker = ticker_for_pair(pair_info, tickers)
         if ticker is None:
             continue
 
-        opportunity = _score_pair(pair, ticker)
+        opportunity = _score_pair(pair, pair_info, ticker)
         if opportunity is None:
             continue
         if opportunity.quote_volume_24h_eur < min_quote_volume_eur:
