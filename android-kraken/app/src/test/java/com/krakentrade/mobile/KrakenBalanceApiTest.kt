@@ -5,7 +5,9 @@ import org.junit.Test
 
 class KrakenBalanceApiTest {
     private val api = KrakenBalanceApi(
-        KrakenPrivateTransport { KrakenCredentials("key", "eA==") }
+        KrakenPrivateTransport(
+            credentialsProvider = { KrakenCredentials("key", "eA==") }
+        )
     )
 
     @Test fun parsesBalanceMap() {
