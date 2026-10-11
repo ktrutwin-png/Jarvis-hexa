@@ -1,7 +1,8 @@
 """Kraken integration for Heksa.
 
 This module deliberately validates orders only. It never submits a live order.
-API credentials are read from environment variables and must never be committed.
+API credentials may be injected at runtime (for example from Android secure
+storage) or read from environment variables. They must never be committed.
 """
 from __future__ import annotations
 
@@ -20,12 +21,20 @@ class OrderProposal:
 
 
 class KrakenClient:
-    def __init__(self) -> None:
-        key = os.getenv("KRAKEN_API_KEY")
-        secret = os.getenv("KRAKEN_PRIVATE_KEY")
-        if not key or not secret:
-            raise RuntimeError("Missing KRAKEN_API_KEY or KRAKEN_PRIVATE_KEY")
-        self.api = krakenex.API(key=key, secret=secret)
+    def __init__(
+        self,
+        key: str | None = None,
+        secret: str | None = None,
+    ) -> None:
+        resolved_key = (key or os.getenv("KRAKEN_API_KEY") or "").strip()
+        resolved_secret = (
+            secret or os.getenv("KRAKEN_PRIVATE_KEY") or ""
+        ).strip()
+
+        if not resolved_key or not resolved_secret:
+            raise RuntimeError("Missing Kraken API credentials")
+
+        self.api = krakenex.API(key=resolved_key, secret=resolved_secret)
 
     def balances(self) -> dict[str, str]:
         response: dict[str, Any] = self.api.query_private("Balance")
@@ -35,6 +44,7 @@ class KrakenClient:
         return response.get("result", {})
 
     def prepare_order(self, pair: str, side: str, volume: str) -> OrderProposal:
+        """Validate an order with Kraken without submitting it."""
         pair = pair.strip().upper()
         side = side.strip().lower()
         volume = volume.strip()
