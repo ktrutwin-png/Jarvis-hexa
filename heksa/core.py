@@ -65,6 +65,7 @@ class MarketAgent:
                     f"{index}. {item['pair']} | {item['status']} | "
                     f"{signal.get('signal', 'N/A')} | "
                     f"conf {float(signal.get('confidence', 0.0)):.0f}% | "
+                    f"€{float(item.get('position_eur', 0.0)):.2f} | "
                     f"score {float(item.get('final_score', 0.0)):.2f}"
                 )
             return "\n".join(rows) if rows else "Brak kandydatów."
