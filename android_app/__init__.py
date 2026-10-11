@@ -1,0 +1,1 @@
+"""NexTrade Android application package."""
