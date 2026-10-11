@@ -4,9 +4,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+interface BalanceGateway {
+    override suspend fun fetchBalances(): Result<Map<String, Double>>
+}
+
 class KrakenBalanceApi(
     private val transport: KrakenPrivateTransport
-) {
+) : BalanceGateway {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun fetchBalances(): Result<Map<String, Double>> =
