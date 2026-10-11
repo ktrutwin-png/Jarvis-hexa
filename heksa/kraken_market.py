@@ -18,7 +18,13 @@ KRAKEN_TICKER_API = f"{KRAKEN_PUBLIC_BASE}/Ticker"
 def _public_get(endpoint: str, params: dict | None = None) -> dict:
     query = urlencode(params or {})
     url = f"{endpoint}?{query}" if query else endpoint
-    request = Request(url, headers={"Accept": "application/json", "User-Agent": "Heksa-NexTrade/0.1"})
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "Heksa-NexTrade/0.1",
+        },
+    )
 
     with urlopen(request, timeout=12) as response:
         payload = json.load(response)
@@ -49,7 +55,12 @@ def fetch_close_prices(pair: str, interval: int = 5, limit: int = 100) -> list[f
 
 
 def fetch_spot_pairs(quote: str = "EUR") -> dict[str, dict]:
-    """Return active Kraken spot pairs for the requested quote currency."""
+    """Return active Kraken spot pairs for the requested display quote currency.
+
+    Kraken uses legacy internal asset codes in some REST fields, while wsname
+    exposes the human-readable market name. Filtering by the display name
+    keeps EUR discovery independent of those internal codes.
+    """
     wanted_quote = quote.strip().upper()
     pairs = _public_get(
         KRAKEN_ASSET_PAIRS_API,
@@ -57,20 +68,58 @@ def fetch_spot_pairs(quote: str = "EUR") -> dict[str, dict]:
     )
 
     selected: dict[str, dict] = {}
-    for pair_name, info in pairs.items():
-        if not isinstance(info, dict):
+    for api_name, raw_info in pairs.items():
+        if not isinstance(raw_info, dict):
             continue
-        if str(info.get("quote", "")).upper() != wanted_quote:
-            continue
-        if str(info.get("status", "")).lower() != "online":
+        if str(raw_info.get("status", "")).lower() != "online":
             continue
 
-        display_name = str(info.get("wsname") or pair_name).upper()
+        wsname = str(raw_info.get("wsname") or "").upper()
+        altname = str(raw_info.get("altname") or api_name).upper()
+        display_name = wsname or altname
+
+        if "/" in display_name:
+            display_quote = display_name.rsplit("/", 1)[-1]
+        elif display_name.endswith(wanted_quote):
+            display_quote = wanted_quote
+        else:
+            continue
+
+        if display_quote != wanted_quote:
+            continue
+
+        info = dict(raw_info)
+        info["_api_name"] = str(api_name).upper()
+        info["_altname"] = altname
+        info["_display_name"] = display_name
         selected[display_name] = info
 
     return selected
 
 
 def fetch_tickers() -> dict[str, dict]:
-    """Return current ticker information for all tradeable spot markets."""
+    """Return current ticker information for tradeable spot markets."""
     return _public_get(KRAKEN_TICKER_API, {"assetVersion": 1})
+
+
+def ticker_for_pair(pair_info: dict, tickers: dict[str, dict]) -> dict | None:
+    """Find ticker data regardless of which Kraken pair alias the response uses."""
+    aliases = [
+        str(pair_info.get("_api_name") or "").upper(),
+        str(pair_info.get("_altname") or pair_info.get("altname") or "").upper(),
+        str(pair_info.get("_display_name") or pair_info.get("wsname") or "").upper(),
+    ]
+
+    expanded: list[str] = []
+    for alias in aliases:
+        if not alias:
+            continue
+        expanded.append(alias)
+        expanded.append(alias.replace("/", ""))
+
+    for alias in expanded:
+        ticker = tickers.get(alias)
+        if isinstance(ticker, dict):
+            return ticker
+
+    return None
