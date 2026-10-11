@@ -14,14 +14,20 @@ from .pair_scanner import rank_eur_pairs
 from .risk import validate_risk
 
 
-def build_market_proposal(pair: str = "XRP/EUR", position_eur: float = 10.0) -> dict:
-    normalized_pair = pair.strip().upper()
-    prices = fetch_close_prices(normalized_pair)
+def build_market_proposal(
+    pair: str = "XRP/EUR",
+    position_eur: float = 10.0,
+    api_pair: str | None = None,
+) -> dict:
+    display_pair = pair.strip().upper()
+    request_pair = (api_pair or pair).strip().upper()
+    prices = fetch_close_prices(request_pair)
     signal = analyze_prices(prices)
 
     if signal.signal == "WAIT":
         return {
-            "pair": normalized_pair,
+            "pair": display_pair,
+            "api_pair": request_pair,
             "status": "WAIT",
             "signal": asdict(signal),
             "requires_user_approval": False,
@@ -36,7 +42,8 @@ def build_market_proposal(pair: str = "XRP/EUR", position_eur: float = 10.0) -> 
     )
 
     return {
-        "pair": normalized_pair,
+        "pair": display_pair,
+        "api_pair": request_pair,
         "status": "PROPOSAL",
         "position_eur": position_eur,
         "signal": asdict(signal),
@@ -57,12 +64,14 @@ def build_best_eur_proposals(
         try:
             proposal = build_market_proposal(
                 pair=opportunity.pair,
+                api_pair=opportunity.api_pair,
                 position_eur=position_eur,
             )
         except (RuntimeError, ValueError) as error:
             proposals.append(
                 {
                     "pair": opportunity.pair,
+                    "api_pair": opportunity.api_pair,
                     "status": "SKIPPED",
                     "reason": str(error),
                     "opportunity": opportunity.to_dict(),
