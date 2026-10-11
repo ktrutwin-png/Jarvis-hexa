@@ -43,7 +43,7 @@ class TradingAnalysisServiceTest {
                 override suspend fun fetchPair(pair: String) = Result.success(rules)
             },
             balances = object : BalanceGateway {
-                override suspend fun fetchBalances() =
+                override suspend fun fetchBalances(): Result<Map<String, Double>> =
                     Result.success(mapOf("ZEUR" to 1000.0, "XXRP" to 0.0))
             }
         )
@@ -75,7 +75,8 @@ class TradingAnalysisServiceTest {
                 override suspend fun fetchPair(pair: String) = Result.success(offline)
             },
             balances = object : BalanceGateway {
-                override suspend fun fetchBalances() = Result.success(emptyMap())
+                override suspend fun fetchBalances(): Result<Map<String, Double>> =
+                    Result.success(emptyMap())
             }
         )
 
