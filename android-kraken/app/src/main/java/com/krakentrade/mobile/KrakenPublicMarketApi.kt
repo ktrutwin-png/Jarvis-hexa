@@ -14,7 +14,7 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 interface MarketDataGateway {
-    override suspend fun fetchOhlc(pair: String, intervalMinutes: Int = 5): Result<List<Candle>>
+    suspend fun fetchOhlc(pair: String, intervalMinutes: Int = 5): Result<List<Candle>>
 }
 
 class KrakenPublicMarketApi(
@@ -23,7 +23,7 @@ class KrakenPublicMarketApi(
     private val json = Json { ignoreUnknownKeys = true }
     private val supportedIntervals = setOf(1, 5, 15, 30, 60, 240, 1440, 10080, 21600)
 
-    suspend fun fetchOhlc(pair: String, intervalMinutes: Int = 5): Result<List<Candle>> =
+    override suspend fun fetchOhlc(pair: String, intervalMinutes: Int = 5): Result<List<Candle>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 require(pair.isNotBlank()) { "Para nie może być pusta" }
