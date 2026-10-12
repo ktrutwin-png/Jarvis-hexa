@@ -1,6 +1,6 @@
 """Build reviewable Kraken trade proposals from fresh public market data.
 
-The runner selects EUR markets automatically, combines live market quality,
+The runner selects EURC markets automatically, combines live market quality,
 technical confidence and conservative historical feedback, and never submits
 a live order.
 """
@@ -16,26 +16,28 @@ from .execution_quality import assess_execution
 from .indicator_engine import analyze_regime
 from .kraken_market import fetch_close_prices, fetch_ohlcv
 from .market_analysis import analyze_prices
-from .pair_scanner import rank_eur_pairs
-from .risk import performance_size_multiplier, suggest_position_eur, validate_risk
+from .market_config import TRADING_QUOTE, require_eurc_pair
+from .pair_scanner import rank_eurc_pairs
+from .risk import performance_size_multiplier, suggest_position_eurc, validate_risk
 
 if TYPE_CHECKING:
     from .journal import SignalJournal
 
 
 def build_market_proposal(
-    pair: str = "XRP/EUR",
-    position_eur: float | None = None,
+    pair: str = "XBT/EURC",
+    position_eurc: float | None = None,
     api_pair: str | None = None,
     risk_size_multiplier: float = 1.0,
 ) -> dict:
-    display_pair = pair.strip().upper()
-    request_pair = (api_pair or pair).strip().upper()
+    display_pair = require_eurc_pair(pair)
+    request_pair = require_eurc_pair(api_pair or pair)
     prices = fetch_close_prices(request_pair, interval=5)
     signal = analyze_prices(prices)
 
     if signal.signal == "WAIT":
         return {
+            "quote_currency": TRADING_QUOTE,
             "pair": display_pair,
             "api_pair": request_pair,
             "status": "WAIT",
@@ -60,6 +62,7 @@ def build_market_proposal(
             "api_pair": request_pair,
             "status": "WAIT",
             "reason": "timeframe_disagreement",
+            "quote_currency": TRADING_QUOTE,
             "signal": asdict(signal),
             "confirmation": asdict(confirmation),
             "requires_user_approval": False,
@@ -82,6 +85,7 @@ def build_market_proposal(
             "api_pair": request_pair,
             "status": "WAIT",
             "reason": "regime_filter",
+            "quote_currency": TRADING_QUOTE,
             "signal": asdict(signal),
             "confirmation": asdict(confirmation),
             "regime": regime.to_dict(),
@@ -89,16 +93,16 @@ def build_market_proposal(
             "live_order_submitted": False,
         }
 
-    if position_eur is not None:
-        selected_position_eur = float(position_eur)
+    if position_eurc is not None:
+        selected_position_eurc = float(position_eurc)
     else:
-        base_position = suggest_position_eur(signal.confidence)
+        base_position = suggest_position_eurc(signal.confidence)
         regime_size_multiplier = (
             min(1.0, max(0.0, regime.score_multiplier))
             if regime.available
             else 1.0
         )
-        selected_position_eur = round(
+        selected_position_eurc = round(
             max(
                 0.01,
                 base_position
@@ -109,19 +113,20 @@ def build_market_proposal(
         )
 
     validate_risk(
-        position_eur=selected_position_eur,
+        position_eurc=selected_position_eurc,
         entry=signal.last_price,
         stop_loss=signal.stop_loss,
         take_profit=signal.take_profit,
     )
 
     return {
+        "quote_currency": TRADING_QUOTE,
         "pair": display_pair,
         "api_pair": request_pair,
         "status": "PROPOSAL",
-        "position_eur": selected_position_eur,
+        "position_eurc": selected_position_eurc,
         "risk_size_multiplier": (
-            1.0 if position_eur is not None else max(0.0, min(1.0, risk_size_multiplier))
+            1.0 if position_eurc is not None else max(0.0, min(1.0, risk_size_multiplier))
         ),
         "signal": asdict(signal),
         "confirmation": asdict(confirmation),
@@ -139,18 +144,21 @@ def _signal_side(signal_name: str) -> str | None:
     return None
 
 
-def build_best_eur_proposals(
+def build_best_eurc_proposals(
     limit: int = 5,
-    position_eur: float | None = None,
+    position_eurc: float | None = None,
     scan_multiplier: int = 3,
     journal: "SignalJournal | None" = None,
 ) -> dict:
-    """Scan EUR markets and rank final candidates using live + historical quality."""
+    """Scan EURC markets and rank final candidates using live + historical quality."""
     scan_limit = max(limit * max(scan_multiplier, 1), limit, 1)
     rejected_pairs = journal.rejected_pairs() if journal is not None else set()
     # Make room for replacements before applying the analysis budget. Otherwise
     # repeated dismissals could leave the scanner stuck on the same top markets.
-    ranked = rank_eur_pairs(limit=scan_limit + len(rejected_pairs))
+    selected_assets = journal.market_selection() if journal is not None else None
+    ranked = rank_eurc_pairs(
+        limit=scan_limit + len(rejected_pairs), allowed_assets=selected_assets,
+    )
     opportunities = [item for item in ranked if item.pair.upper() not in rejected_pairs][:scan_limit]
     proposals: list[dict] = []
 
@@ -162,7 +170,7 @@ def build_best_eur_proposals(
             "wins": 0,
             "losses": 0,
             "win_rate_pct": 0.0,
-            "pnl_eur": 0.0,
+            "pnl_eurc": 0.0,
             "avg_return_pct": 0.0,
             "consecutive_losses": 0,
         }
@@ -175,7 +183,7 @@ def build_best_eur_proposals(
             proposal = build_market_proposal(
                 pair=opportunity.pair,
                 api_pair=opportunity.api_pair,
-                position_eur=position_eur,
+                position_eurc=position_eurc,
                 risk_size_multiplier=risk_multiplier,
             )
         except (RuntimeError, ValueError) as error:
@@ -274,7 +282,7 @@ def build_best_eur_proposals(
                     execution = assess_execution(
                         opportunity.pair,
                         side=side,
-                        position_eur=float(proposal.get("position_eur") or 0.0),
+                        position_eurc=float(proposal.get("position_eurc") or 0.0),
                     )
                     proposal["execution"] = execution.to_dict()
 
@@ -320,8 +328,9 @@ def build_best_eur_proposals(
     actionable = len(actionable_items[:limit])
 
     return {
-        "quote_currency": "EUR",
+        "quote_currency": TRADING_QUOTE,
         "requested_limit": limit,
+        "selected_assets": sorted(selected_assets) if selected_assets is not None else None,
         "markets_scanned": len(opportunities),
         "rejected_pairs_skipped": sum(item.pair.upper() in rejected_pairs for item in ranked),
         "actionable_candidates": actionable,
@@ -334,7 +343,7 @@ def build_best_eur_proposals(
 
 
 def main() -> None:
-    print(json.dumps(build_best_eur_proposals(), indent=2))
+    print(json.dumps(build_best_eurc_proposals(), indent=2))
 
 
 if __name__ == "__main__":

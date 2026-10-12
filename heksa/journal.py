@@ -1,4 +1,4 @@
-"""Persistent EUR signal journal and performance summaries."""
+"""Persistent EURC signal journal and performance summaries."""
 from __future__ import annotations
 
 import json
@@ -6,42 +6,45 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
+from .market_config import require_eurc_pair
 
 
 class SignalJournal:
+    """EURC records use separate tables so old EUR history is never relabelled."""
+
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute(
-                """CREATE TABLE IF NOT EXISTS signals (
+                """CREATE TABLE IF NOT EXISTS signals_eurc (
                     id TEXT PRIMARY KEY,
                     created TEXT NOT NULL,
                     pair TEXT NOT NULL,
                     status TEXT NOT NULL,
                     side TEXT,
-                    entry_eur REAL,
-                    position_eur REAL,
+                    entry_eurc REAL,
+                    position_eurc REAL,
                     confidence REAL,
                     market_score REAL,
                     final_score REAL,
-                    stop_loss_eur REAL,
-                    take_profit_eur REAL,
+                    stop_loss_eurc REAL,
+                    take_profit_eurc REAL,
                     payload_json TEXT NOT NULL
                 )"""
             )
             db.execute(
-                """CREATE TABLE IF NOT EXISTS outcomes (
+                """CREATE TABLE IF NOT EXISTS outcomes_eurc (
                     signal_id TEXT PRIMARY KEY,
                     closed TEXT NOT NULL,
-                    exit_eur REAL NOT NULL,
-                    pnl_eur REAL NOT NULL,
+                    exit_eurc REAL NOT NULL,
+                    pnl_eurc REAL NOT NULL,
                     result TEXT NOT NULL,
-                    FOREIGN KEY(signal_id) REFERENCES signals(id)
+                    FOREIGN KEY(signal_id) REFERENCES signals_eurc(id)
                 )"""
             )
             db.execute(
-                """CREATE TABLE IF NOT EXISTS proposal_rejections (
+                """CREATE TABLE IF NOT EXISTS proposal_rejections_eurc (
                     proposal_id TEXT PRIMARY KEY,
                     pair TEXT NOT NULL,
                     rejected_at TEXT NOT NULL,
@@ -50,8 +53,8 @@ class SignalJournal:
                 )"""
             )
             db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_rejections_expiry "
-                "ON proposal_rejections(skip_until)"
+                "CREATE INDEX IF NOT EXISTS idx_rejections_eurc_expiry "
+                "ON proposal_rejections_eurc(skip_until)"
             )
             db.execute(
                 """CREATE TABLE IF NOT EXISTS journal_settings (
@@ -73,6 +76,29 @@ class SignalJournal:
             ).fetchone()
         return int(row["value"]) if row else 30
 
+    def market_selection(self) -> set[str] | None:
+        """None means every available EURC market; an empty set means none."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT value FROM journal_settings WHERE key='eurc_market_selection'"
+            ).fetchone()
+        selected = json.loads(row["value"]) if row else None
+        return set(selected) if selected is not None else None
+
+    def set_market_selection(self, symbols: set[str] | None) -> None:
+        if symbols is not None:
+            if any(not symbol.isascii() or not symbol.isalnum() or not 1 <= len(symbol) <= 20
+                   for symbol in symbols):
+                raise ValueError("Nieprawidłowy symbol aktywa.")
+            symbols = {symbol.upper() for symbol in symbols}
+        with self._connect() as db:
+            db.execute(
+                """INSERT INTO journal_settings(key, value)
+                   VALUES ('eurc_market_selection', ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (json.dumps(sorted(symbols) if symbols is not None else None),),
+            )
+
     def set_rejection_cooldown_minutes(self, minutes: int) -> None:
         if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 1440:
             raise ValueError("Czas pomijania musi wynosić od 1 do 1440 pełnych minut.")
@@ -91,14 +117,14 @@ class SignalJournal:
         Existing dismissals keep their expiry when the preference changes.
         """
         proposal_id = str(proposal.get("proposal_id") or "").strip()
-        pair = str(proposal.get("pair") or "").strip().upper()
+        pair = require_eurc_pair(str(proposal.get("pair") or ""))
         if not proposal_id or not pair or proposal.get("status") != "PROPOSAL":
             raise ValueError("Brak aktualnej propozycji do odrzucenia.")
         now = datetime.now(timezone.utc)
         skip_until = now + timedelta(minutes=self.rejection_cooldown_minutes())
         with self._connect() as db:
             cursor = db.execute(
-                """INSERT INTO proposal_rejections
+                """INSERT INTO proposal_rejections_eurc
                    (proposal_id, pair, rejected_at, skip_until, payload_json)
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(proposal_id) DO NOTHING""",
@@ -112,7 +138,7 @@ class SignalJournal:
     def rejected_pairs(self) -> set[str]:
         with self._connect() as db:
             rows = db.execute(
-                "SELECT DISTINCT pair FROM proposal_rejections WHERE skip_until > ?",
+                "SELECT DISTINCT pair FROM proposal_rejections_eurc WHERE skip_until > ?",
                 (datetime.now(timezone.utc).isoformat(),),
             ).fetchall()
         return {row["pair"] for row in rows}
@@ -121,12 +147,13 @@ class SignalJournal:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT proposal_id, pair, rejected_at, skip_until
-                   FROM proposal_rejections ORDER BY rejected_at DESC LIMIT ?""",
+                   FROM proposal_rejections_eurc ORDER BY rejected_at DESC LIMIT ?""",
                 (max(1, min(int(limit), 100)),),
             ).fetchall()
         return [dict(row) for row in rows]
 
     def record(self, proposal: dict) -> str:
+        require_eurc_pair(str(proposal.get("pair") or ""))
         signal_id = uuid4().hex
         signal = proposal.get("signal") or {}
         opportunity = proposal.get("opportunity") or {}
@@ -146,7 +173,7 @@ class SignalJournal:
             str(proposal.get("status") or ""),
             side,
             _as_float(signal.get("last_price")),
-            _as_float(proposal.get("position_eur")),
+            _as_float(proposal.get("position_eurc")),
             _as_float(signal.get("confidence")),
             _as_float(opportunity.get("opportunity_score")),
             _as_float(proposal.get("final_score")),
@@ -157,10 +184,10 @@ class SignalJournal:
 
         with self._connect() as db:
             db.execute(
-                """INSERT INTO signals (
-                    id, created, pair, status, side, entry_eur, position_eur,
-                    confidence, market_score, final_score, stop_loss_eur,
-                    take_profit_eur, payload_json
+                """INSERT INTO signals_eurc (
+                    id, created, pair, status, side, entry_eurc, position_eurc,
+                    confidence, market_score, final_score, stop_loss_eurc,
+                    take_profit_eurc, payload_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 values,
             )
@@ -170,55 +197,55 @@ class SignalJournal:
         safe_limit = max(1, min(int(limit), 200))
         with self._connect() as db:
             rows = db.execute(
-                """SELECT s.*, o.closed, o.exit_eur, o.pnl_eur, o.result
-                   FROM signals s
-                   LEFT JOIN outcomes o ON o.signal_id = s.id
+                """SELECT s.*, o.closed, o.exit_eurc, o.pnl_eurc, o.result
+                   FROM signals_eurc s
+                   LEFT JOIN outcomes_eurc o ON o.signal_id = s.id
                    ORDER BY s.created DESC
                    LIMIT ?""",
                 (safe_limit,),
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def close(self, signal_id: str, exit_eur: float) -> dict:
+    def close(self, signal_id: str, exit_eurc: float) -> dict:
         with self._connect() as db:
             row = db.execute(
-                "SELECT * FROM signals WHERE id=?",
+                "SELECT * FROM signals_eurc WHERE id=?",
                 (signal_id,),
             ).fetchone()
             if row is None:
                 raise ValueError("unknown signal id")
 
             if db.execute(
-                "SELECT 1 FROM outcomes WHERE signal_id=?",
+                "SELECT 1 FROM outcomes_eurc WHERE signal_id=?",
                 (signal_id,),
             ).fetchone():
                 raise ValueError("signal already closed")
 
-            entry = float(row["entry_eur"] or 0.0)
-            position = float(row["position_eur"] or 0.0)
+            entry = float(row["entry_eurc"] or 0.0)
+            position = float(row["position_eurc"] or 0.0)
             side = row["side"]
             if entry <= 0 or position <= 0 or side not in {"buy", "sell"}:
                 raise ValueError("signal is not an actionable position")
 
-            move = (float(exit_eur) - entry) / entry
+            move = (float(exit_eurc) - entry) / entry
             if side == "sell":
                 move = -move
 
-            pnl_eur = position * move
-            result = "win" if pnl_eur > 0 else "loss" if pnl_eur < 0 else "flat"
+            pnl_eurc = position * move
+            result = "win" if pnl_eurc > 0 else "loss" if pnl_eurc < 0 else "flat"
             closed = datetime.now(timezone.utc).isoformat()
 
             db.execute(
-                """INSERT INTO outcomes
-                   (signal_id, closed, exit_eur, pnl_eur, result)
+                """INSERT INTO outcomes_eurc
+                   (signal_id, closed, exit_eurc, pnl_eurc, result)
                    VALUES (?, ?, ?, ?, ?)""",
-                (signal_id, closed, float(exit_eur), pnl_eur, result),
+                (signal_id, closed, float(exit_eurc), pnl_eurc, result),
             )
 
         return {
             "signal_id": signal_id,
-            "exit_eur": float(exit_eur),
-            "pnl_eur": pnl_eur,
+            "exit_eurc": float(exit_eurc),
+            "pnl_eurc": pnl_eurc,
             "result": result,
         }
 
@@ -245,7 +272,7 @@ class SignalJournal:
         with self._connect() as db:
             latest = db.execute(
                 """SELECT created
-                   FROM signals
+                   FROM signals_eurc
                    WHERE pair=? AND side=? AND status='PROPOSAL'
                    ORDER BY created DESC
                    LIMIT 1""",
@@ -254,7 +281,7 @@ class SignalJournal:
 
             daily_count = db.execute(
                 """SELECT COUNT(*) AS count
-                   FROM signals
+                   FROM signals_eurc
                    WHERE pair=? AND status='PROPOSAL' AND created>=?""",
                 (normalized_pair, day_start.isoformat()),
             ).fetchone()["count"]
@@ -301,16 +328,16 @@ class SignalJournal:
                     COUNT(*) AS closed_count,
                     COALESCE(SUM(CASE WHEN o.result='win' THEN 1 ELSE 0 END), 0) AS wins,
                     COALESCE(SUM(CASE WHEN o.result='loss' THEN 1 ELSE 0 END), 0) AS losses,
-                    COALESCE(SUM(o.pnl_eur), 0.0) AS pnl_eur,
+                    COALESCE(SUM(o.pnl_eurc), 0.0) AS pnl_eurc,
                     COALESCE(AVG(
                         CASE
-                            WHEN s.position_eur > 0
-                            THEN (o.pnl_eur / s.position_eur) * 100.0
+                            WHEN s.position_eurc > 0
+                            THEN (o.pnl_eurc / s.position_eurc) * 100.0
                             ELSE NULL
                         END
                     ), 0.0) AS avg_return_pct
-                   FROM signals s
-                   JOIN outcomes o ON o.signal_id = s.id
+                   FROM signals_eurc s
+                   JOIN outcomes_eurc o ON o.signal_id = s.id
                    {where}""",
                 params,
             ).fetchone()
@@ -339,7 +366,7 @@ class SignalJournal:
             "losses": losses,
             "bayesian_win_rate_pct": bayesian_win_rate * 100.0,
             "avg_return_pct": avg_return_pct,
-            "pnl_eur": float(row["pnl_eur"]),
+            "pnl_eurc": float(row["pnl_eurc"]),
             "ranking_multiplier": multiplier,
         }
 
@@ -350,10 +377,10 @@ class SignalJournal:
             rows = db.execute(
                 """SELECT
                     o.result,
-                    o.pnl_eur,
-                    s.position_eur
-                   FROM outcomes o
-                   JOIN signals s ON s.id = o.signal_id
+                    o.pnl_eurc,
+                    s.position_eurc
+                   FROM outcomes_eurc o
+                   JOIN signals_eurc s ON s.id = o.signal_id
                    ORDER BY o.closed DESC
                    LIMIT ?""",
                 (safe_limit,),
@@ -365,20 +392,20 @@ class SignalJournal:
                 "wins": 0,
                 "losses": 0,
                 "win_rate_pct": 0.0,
-                "pnl_eur": 0.0,
+                "pnl_eurc": 0.0,
                 "avg_return_pct": 0.0,
                 "consecutive_losses": 0,
             }
 
         wins = sum(row["result"] == "win" for row in rows)
         losses = sum(row["result"] == "loss" for row in rows)
-        pnl_eur = sum(float(row["pnl_eur"] or 0.0) for row in rows)
+        pnl_eurc = sum(float(row["pnl_eurc"] or 0.0) for row in rows)
 
         returns = []
         for row in rows:
-            position = float(row["position_eur"] or 0.0)
+            position = float(row["position_eurc"] or 0.0)
             if position > 0:
-                returns.append(float(row["pnl_eur"] or 0.0) / position * 100.0)
+                returns.append(float(row["pnl_eurc"] or 0.0) / position * 100.0)
 
         consecutive_losses = 0
         for row in rows:
@@ -392,7 +419,7 @@ class SignalJournal:
             "wins": wins,
             "losses": losses,
             "win_rate_pct": wins / closed * 100.0,
-            "pnl_eur": pnl_eur,
+            "pnl_eurc": pnl_eurc,
             "avg_return_pct": sum(returns) / len(returns) if returns else 0.0,
             "consecutive_losses": consecutive_losses,
         }
@@ -402,10 +429,10 @@ class SignalJournal:
             row = db.execute(
                 """SELECT
                     COUNT(*) AS closed_count,
-                    COALESCE(SUM(pnl_eur), 0.0) AS pnl_eur,
+                    COALESCE(SUM(pnl_eurc), 0.0) AS pnl_eurc,
                     COALESCE(SUM(CASE WHEN result='win' THEN 1 ELSE 0 END), 0) AS wins,
                     COALESCE(SUM(CASE WHEN result='loss' THEN 1 ELSE 0 END), 0) AS losses
-                   FROM outcomes"""
+                   FROM outcomes_eurc"""
             ).fetchone()
 
         closed = int(row["closed_count"])
@@ -415,7 +442,7 @@ class SignalJournal:
             "wins": wins,
             "losses": int(row["losses"]),
             "win_rate_pct": (wins / closed * 100.0) if closed else 0.0,
-            "pnl_eur": float(row["pnl_eur"]),
+            "pnl_eurc": float(row["pnl_eurc"]),
         }
 
 

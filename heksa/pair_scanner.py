@@ -1,4 +1,4 @@
-"""EUR opportunity scanner for Kraken spot markets.
+"""EURC opportunity scanner for Kraken spot markets.
 
 Ranks markets by a transparent opportunity score built from:
 - 24h quote-volume liquidity,
@@ -13,14 +13,15 @@ from dataclasses import asdict, dataclass
 from math import isfinite, log10
 
 from .kraken_market import fetch_spot_pairs, fetch_tickers, ticker_for_pair
+from .market_config import FIAT_ASSETS, TRADING_QUOTE, base_symbol, require_eurc_pair
 
 
 @dataclass(frozen=True)
 class PairOpportunity:
     pair: str
     api_pair: str
-    last_price_eur: float
-    quote_volume_24h_eur: float
+    last_price_eurc: float
+    quote_volume_24h_eurc: float
     range_24h_pct: float
     spread_bps: float
     taker_fee_bps: float
@@ -89,8 +90,8 @@ def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | N
     return PairOpportunity(
         pair=pair,
         api_pair=str(pair_info.get("_altname") or pair_info.get("_api_name") or pair).upper(),
-        last_price_eur=last,
-        quote_volume_24h_eur=quote_volume,
+        last_price_eurc=last,
+        quote_volume_24h_eurc=quote_volume,
         range_24h_pct=range_pct,
         spread_bps=spread_bps,
         taker_fee_bps=taker_fee_bps,
@@ -99,20 +100,31 @@ def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | N
     )
 
 
-def rank_eur_pairs(
+def rank_eurc_pairs(
     limit: int = 12,
-    min_quote_volume_eur: float = 50_000.0,
+    min_quote_volume_eurc: float = 50_000.0,
     max_spread_bps: float = 80.0,
+    allowed_assets: set[str] | None = None,
 ) -> list[PairOpportunity]:
-    """Return the strongest currently tradeable Kraken EUR markets."""
+    """Return the strongest currently tradeable Kraken EURC markets."""
     if limit <= 0:
         return []
 
-    pairs = fetch_spot_pairs("EUR")
+    pairs = fetch_spot_pairs(TRADING_QUOTE)
+    if not pairs:
+        return []
     tickers = fetch_tickers()
 
     ranked: list[PairOpportunity] = []
     for pair, pair_info in pairs.items():
+        if str(pair_info.get("base") or "").upper() in FIAT_ASSETS:
+            continue
+        try:
+            require_eurc_pair(pair)
+            if allowed_assets is not None and base_symbol(pair) not in allowed_assets:
+                continue
+        except ValueError:
+            continue
         ticker = ticker_for_pair(pair_info, tickers)
         if ticker is None:
             continue
@@ -120,7 +132,7 @@ def rank_eur_pairs(
         opportunity = _score_pair(pair, pair_info, ticker)
         if opportunity is None:
             continue
-        if opportunity.quote_volume_24h_eur < min_quote_volume_eur:
+        if opportunity.quote_volume_24h_eurc < min_quote_volume_eurc:
             continue
         if opportunity.spread_bps > max_spread_bps:
             continue
@@ -131,6 +143,6 @@ def rank_eur_pairs(
     return ranked[:limit]
 
 
-def best_eur_pairs(limit: int = 12) -> list[dict]:
+def best_eurc_pairs(limit: int = 12, allowed_assets: set[str] | None = None) -> list[dict]:
     """JSON-friendly result for UI/agent consumption."""
-    return [item.to_dict() for item in rank_eur_pairs(limit=limit)]
+    return [item.to_dict() for item in rank_eurc_pairs(limit=limit, allowed_assets=allowed_assets)]

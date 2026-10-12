@@ -6,34 +6,34 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class RiskLimits:
-    max_position_eur: float = 10.0
-    min_position_eur: float = 2.0
+    max_position_eurc: float = 10.0
+    min_position_eurc: float = 2.0
     max_stop_pct: float = 0.01
     min_reward_risk: float = 1.5
 
 
-def suggest_position_eur(
+def suggest_position_eurc(
     confidence: float,
     limits: RiskLimits = RiskLimits(),
 ) -> float:
-    """Scale position size inside configured EUR limits using signal confidence."""
+    """Scale position size inside configured EURC limits using signal confidence."""
     bounded = max(0.0, min(100.0, float(confidence)))
     if bounded <= 0:
         return 0.0
 
-    span = max(0.0, limits.max_position_eur - limits.min_position_eur)
-    scaled = limits.min_position_eur + span * (bounded / 100.0)
-    return round(min(limits.max_position_eur, max(limits.min_position_eur, scaled)), 2)
+    span = max(0.0, limits.max_position_eurc - limits.min_position_eurc)
+    scaled = limits.min_position_eurc + span * (bounded / 100.0)
+    return round(min(limits.max_position_eurc, max(limits.min_position_eurc, scaled)), 2)
 
 
 def validate_risk(
-    position_eur: float,
+    position_eurc: float,
     entry: float,
     stop_loss: float,
     take_profit: float,
     limits: RiskLimits = RiskLimits(),
 ) -> None:
-    if position_eur <= 0 or position_eur > limits.max_position_eur:
+    if position_eurc <= 0 or position_eurc > limits.max_position_eurc:
         raise ValueError("position size outside configured limit")
     risk = abs(entry - stop_loss)
     reward = abs(take_profit - entry)
@@ -50,7 +50,7 @@ def performance_size_multiplier(recent: dict) -> float:
     closed = int(recent.get("closed_count") or 0)
     losses_in_row = int(recent.get("consecutive_losses") or 0)
     win_rate = float(recent.get("win_rate_pct") or 0.0)
-    pnl_eur = float(recent.get("pnl_eur") or 0.0)
+    pnl_eurc = float(recent.get("pnl_eurc") or 0.0)
 
     if closed < 3:
         return 1.0
@@ -60,6 +60,6 @@ def performance_size_multiplier(recent: dict) -> float:
         return 0.60
     if closed >= 6 and win_rate < 35.0:
         return 0.70
-    if pnl_eur < 0 and win_rate < 45.0:
+    if pnl_eurc < 0 and win_rate < 45.0:
         return 0.85
     return 1.0

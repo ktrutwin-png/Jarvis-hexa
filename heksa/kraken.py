@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import krakenex
+from .market_config import require_eurc_pair
 
 
 REQUEST_TIMEOUT_SECONDS = 15
@@ -50,7 +51,7 @@ class KrakenClient:
 
     def prepare_order(self, pair: str, side: str, volume: str) -> OrderProposal:
         """Validate an order with Kraken without submitting it."""
-        pair = pair.strip().upper()
+        pair = require_eurc_pair(pair)
         side = side.strip().lower()
         volume = volume.strip()
         if side not in {"buy", "sell"}:

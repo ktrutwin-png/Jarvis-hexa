@@ -17,12 +17,13 @@ import flet_secure_storage as fss
 
 from heksa.core import HeksaCore
 from heksa.kraken import KrakenClient
-from heksa.portfolio import fetch_portfolio_eur
-from heksa.trading_runner import build_best_eur_proposals
+from heksa.market_config import WATCHLIST_ASSETS, fetch_market_catalog
+from heksa.portfolio import fetch_portfolio_eurc
+from heksa.trading_runner import build_best_eurc_proposals
 
 
 APP_NAME = "NexTrade"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 KRAKEN_API_KEY = "nextrade.kraken.api_key"
 KRAKEN_PRIVATE_KEY = "nextrade.kraken.private_key"
 
@@ -50,6 +51,11 @@ class NexTradeAndroidApp:
         self.scan_in_progress = False
         self.decision_in_progress = False
         self.scan_error: str | None = None
+        self.market_catalog: list[dict] | None = None
+        self.market_refresh_in_progress = False
+        self.market_selection_in_progress = False
+        self.market_error: str | None = None
+        self.selected_assets = self.core.journal.market_selection()
         self.rejection_cooldown_field = ft.TextField(
             label="Pomijaj odrzuconą parę przez (minuty)",
             value=str(self.core.journal.rejection_cooldown_minutes()),
@@ -114,12 +120,17 @@ class NexTradeAndroidApp:
                     selected_icon=ft.Icons.SETTINGS,
                     label="Ustawienia",
                 ),
+                ft.NavigationBarDestination(
+                    icon=ft.Icons.LIST,
+                    label="Rynki",
+                ),
             ],
         )
 
         self._configure_page()
         self._show_view(0)
         self.page.run_task(self._refresh_credentials_status)
+        self.page.run_task(self._refresh_market_catalog)
 
     def _configure_page(self) -> None:
         self.page.title = APP_NAME
@@ -147,6 +158,7 @@ class NexTradeAndroidApp:
             self._signals_view,
             self._portfolio_view,
             self._settings_view,
+            self._markets_view,
         )
         safe_index = index if 0 <= index < len(views) else 0
         self.navigation.selected_index = safe_index
@@ -240,7 +252,7 @@ class NexTradeAndroidApp:
             controls=[
                 self._metric("Rynki", str(scan_count)),
                 self._metric("Sygnały", str(actionable)),
-                self._metric("Waluta", "EUR"),
+                self._metric("Waluta", "EURC"),
             ],
         )
 
@@ -258,7 +270,7 @@ class NexTradeAndroidApp:
                 status,
                 metrics,
                 ft.Button(
-                    "Skanuj rynek EUR",
+                    "Skanuj rynek EURC",
                     icon=ft.Icons.REFRESH,
                     on_click=self._refresh_signals,
                     disabled=self.scan_in_progress or self.decision_in_progress,
@@ -318,7 +330,12 @@ class NexTradeAndroidApp:
                     "Możesz ponowić wyszukiwanie przyciskiem powyżej.",
                     color=MUTED,
                 )))
-            for item in proposals:
+            for index, item in enumerate(proposals):
+                if index == 0 and item.get("status") == "PROPOSAL":
+                    controls.append(ft.Text(
+                        "Najwyżej oceniona propozycja", color=SUCCESS,
+                        weight=ft.FontWeight.BOLD,
+                    ))
                 controls.append(self._signal_card(item))
 
         rejections = self.core.journal.recent_rejections()
@@ -336,12 +353,113 @@ class NexTradeAndroidApp:
     def _display_time(value: str) -> str:
         return datetime.fromisoformat(value).astimezone().strftime("%d.%m %H:%M %Z")
 
+    def _markets_view(self) -> ft.Control:
+        automatic = self.selected_assets is None
+        selection_locked = (self.scan_in_progress or self.decision_in_progress
+                            or self.market_selection_in_progress)
+        controls = [
+            self._section_title("Rynki EURC", "Dostępność bezpośrednich par na Krakenie."),
+            ft.Switch(
+                label="Wszystkie dostępne pary EURC",
+                value=automatic,
+                disabled=selection_locked,
+                on_change=self._change_market_mode,
+            ),
+            ft.Text(
+                "Tryb automatyczny obejmuje również nowe pary EURC dodane przez Kraken. "
+                "Wyłącz go, jeśli chcesz wskazać własną listę. "
+                "Wybrane aktywa bez pary EURC czekają na jej dostępność.",
+                color=MUTED, size=12,
+            ),
+            ft.Button(
+                "Odśwież dostępność",
+                on_click=self._refresh_market_catalog,
+                disabled=self.market_refresh_in_progress,
+            ),
+        ]
+        if self.market_refresh_in_progress:
+            controls.append(ft.Text("Pobieram listę rynków…", color=ACCENT))
+        if self.market_error:
+            controls.append(ft.Text(self.market_error, color=DANGER))
+        catalog = self.market_catalog or [
+            {"symbol": symbol, "name": name, "pair": None, "available": False}
+            for symbol, name in WATCHLIST_ASSETS.items()
+        ]
+        for market in catalog:
+            symbol = market["symbol"]
+            available = market["available"]
+            label = (market["pair"] + " • aktywna para" if available else
+                     "Brak aktywnej pary EURC" if self.market_catalog is not None else
+                     "Dostępność jeszcze niepotwierdzona")
+            controls.append(self._card(ft.Column(
+                spacing=2,
+                controls=[
+                    ft.Checkbox(
+                        label=f"{symbol} — {market['name']}",
+                        value=available if automatic else symbol in self.selected_assets,
+                        data=symbol,
+                        disabled=automatic or selection_locked,
+                        on_change=self._change_market_selection,
+                    ),
+                    ft.Text(label, color=SUCCESS if available else MUTED, size=12),
+                ],
+            )))
+        return self._screen(controls)
+
+    async def _refresh_market_catalog(self, _event: ft.Event | None = None) -> None:
+        if self.market_refresh_in_progress:
+            return
+        self.market_refresh_in_progress = True
+        self.market_error = None
+        try:
+            if self.navigation.selected_index == 4:
+                self._show_view(4)
+            self.market_catalog = await asyncio.to_thread(fetch_market_catalog)
+        except Exception:
+            self.market_error = "Nie udało się potwierdzić dostępności. Spróbuj odświeżyć listę."
+        finally:
+            self.market_refresh_in_progress = False
+            if self.navigation.selected_index == 4:
+                self._show_view(4)
+
+    async def _save_market_selection(self, selection: set[str] | None) -> None:
+        if self.scan_in_progress or self.decision_in_progress or self.market_selection_in_progress:
+            return
+        self.market_selection_in_progress = True
+        try:
+            self._show_view(4)
+            await asyncio.to_thread(self.core.journal.set_market_selection, selection)
+            self.selected_assets = selection
+            self.last_scan = None
+            self.scan_error = None
+        except Exception:
+            self._show_message("Nie udało się zapisać wyboru rynków. Spróbuj ponownie.", DANGER)
+        finally:
+            self.market_selection_in_progress = False
+            self._show_view(self.navigation.selected_index)
+
+    async def _change_market_mode(self, event: ft.Event) -> None:
+        selection = None if event.control.value else {
+            item["symbol"] for item in self.market_catalog or [] if item["available"]
+        }
+        await self._save_market_selection(selection)
+
+    async def _change_market_selection(self, event: ft.Event) -> None:
+        if self.selected_assets is None:
+            return
+        selection = set(self.selected_assets)
+        if event.control.value:
+            selection.add(event.control.data)
+        else:
+            selection.discard(event.control.data)
+        await self._save_market_selection(selection)
+
     def _signal_card(self, item: dict[str, Any]) -> ft.Control:
         status = str(item.get("status") or "WAIT")
         signal = item.get("signal") or {}
         opportunity = item.get("opportunity") or {}
         confidence = float(signal.get("confidence") or 0.0)
-        position = float(item.get("position_eur") or 0.0)
+        position = float(item.get("position_eurc") or 0.0)
         score = float(item.get("final_score") or 0.0)
         spread = float(opportunity.get("spread_bps") or 0.0)
         reason = str(item.get("reason") or "")
@@ -371,7 +489,7 @@ class NexTradeAndroidApp:
                 color=MUTED,
             ),
             ft.Text(
-                f"Pozycja €{position:.2f} • score {score:.2f} • spread {spread:.1f} bps",
+                f"Pozycja EURC {position:.2f} • score {score:.2f} • spread {spread:.1f} bps",
                 color=MUTED,
                 size=12,
             ),
@@ -383,8 +501,8 @@ class NexTradeAndroidApp:
             entry = float(signal.get("last_price") or 0.0)
             costs_bps = float(item.get("estimated_round_trip_cost_bps") or 0.0)
             rows.append(ft.Text(
-                f"Cena odniesienia €{entry:.8g} • szacowane koszty wejścia "
-                f"i wyjścia €{position * costs_bps / 10_000:.4f}",
+                f"Cena odniesienia EURC {entry:.8g} • szacowane koszty wejścia "
+                f"i wyjścia EURC {position * costs_bps / 10_000:.4f}",
                 color=MUTED, size=12,
             ))
             if item.get("analyzed_at"):
@@ -418,7 +536,7 @@ class NexTradeAndroidApp:
         controls: list[ft.Control] = [
             self._section_title(
                 "Portfel",
-                "Odczyt salda Kraken i wycena w EUR. Bez prawa do wypłat.",
+                "Saldo Kraken i orientacyjna wycena portfela w EURC.",
             ),
             ft.Button(
                 "Odśwież portfel",
@@ -458,7 +576,7 @@ class NexTradeAndroidApp:
             )
             return self._screen(controls)
 
-        total = float(self.portfolio_snapshot.get("total_eur") or 0.0)
+        total = float(self.portfolio_snapshot.get("total_eurc") or 0.0)
         unpriced = self.portfolio_snapshot.get("unpriced") or []
         controls.append(
             self._card(
@@ -470,7 +588,7 @@ class NexTradeAndroidApp:
                             color=MUTED,
                         ),
                         ft.Text(
-                            f"€{total:,.2f}",
+                            f"EURC {total:,.2f}",
                             size=30,
                             weight=ft.FontWeight.BOLD,
                             color=TEXT,
@@ -488,7 +606,7 @@ class NexTradeAndroidApp:
                         spacing=6,
                         controls=[
                             ft.Text(
-                                "Nie wszystkie aktywa mają wycenę w EUR.",
+                                "Nie wszystkie aktywa mają wycenę w EURC.",
                                 color=WARNING,
                                 weight=ft.FontWeight.BOLD,
                             ),
@@ -529,7 +647,7 @@ class NexTradeAndroidApp:
                                 ],
                             ),
                             ft.Text(
-                                f"€{float(holding.get('value_eur') or 0.0):,.2f}",
+                                f"EURC {float(holding.get('value_eurc') or 0.0):,.2f}",
                                 color=TEXT,
                                 weight=ft.FontWeight.BOLD,
                             ),
@@ -627,7 +745,8 @@ class NexTradeAndroidApp:
             self._show_message("Nie udało się zapisać czasu pomijania. Spróbuj ponownie.", DANGER)
 
     async def _reject_proposal(self, event: ft.Event) -> None:
-        if self.scan_in_progress or self.decision_in_progress or not self.last_scan:
+        if (self.scan_in_progress or self.decision_in_progress
+                or self.market_selection_in_progress or not self.last_scan):
             return
         proposal_id = event.control.data
         item = next((item for item in self.last_scan.get("proposals", [])
@@ -660,15 +779,15 @@ class NexTradeAndroidApp:
             await self._refresh_signals()
 
     async def _refresh_signals(self, _event: ft.Event | None = None) -> None:
-        if self.scan_in_progress or self.decision_in_progress:
+        if self.scan_in_progress or self.decision_in_progress or self.market_selection_in_progress:
             return
         self.scan_in_progress = True
         self.scan_error = None
         try:
             self._show_view(self.navigation.selected_index)
-            self._show_busy("Skanuję rynki EUR…")
+            self._show_busy("Skanuję rynki EURC…")
             result = await asyncio.to_thread(
-                lambda: build_best_eur_proposals(
+                lambda: build_best_eurc_proposals(
                     limit=5,
                     journal=self.core.journal,
                 )
@@ -754,7 +873,7 @@ class NexTradeAndroidApp:
 
             client = KrakenClient(key=api_key, secret=private_key)
             self.portfolio_snapshot = await asyncio.to_thread(
-                fetch_portfolio_eur,
+                fetch_portfolio_eurc,
                 client,
             )
             self.navigation.selected_index = 2

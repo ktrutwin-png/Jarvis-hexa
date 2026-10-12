@@ -18,6 +18,7 @@ from typing import Any, Mapping
 import uuid
 
 from .risk import RiskLimits, validate_risk
+from .market_config import require_eurc_pair
 
 
 PENDING_STATES = frozenset({"VALIDATED", "APPROVED"})
@@ -28,11 +29,11 @@ FINAL_STATES = frozenset({"SIMULATED", "REJECTED", "CANCELLED", "BLOCKED"})
 class ExecutionLimits:
     """Hard limits that cannot be bypassed by signal-scoring code."""
 
-    max_position_eur: float = 10.0
+    max_position_eurc: float = 10.0
     max_pending_orders: int = 3
-    max_pending_exposure_eur: float = 20.0
+    max_pending_exposure_eurc: float = 20.0
     max_daily_simulations: int = 8
-    max_daily_loss_eur: float = 5.0
+    max_daily_loss_eurc: float = 5.0
     min_confidence: float = 35.0
     max_slippage_bps: float = 20.0
     estimated_entry_fee_bps: float = 40.0
@@ -72,7 +73,7 @@ class OrderLifecycle:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS orders (
+                CREATE TABLE IF NOT EXISTS orders_eurc (
                     id TEXT PRIMARY KEY,
                     client_order_id TEXT NOT NULL UNIQUE,
                     fingerprint TEXT NOT NULL UNIQUE,
@@ -81,7 +82,7 @@ class OrderLifecycle:
                     pair TEXT NOT NULL,
                     api_pair TEXT NOT NULL,
                     side TEXT NOT NULL CHECK(side IN ('buy', 'sell')),
-                    position_eur REAL NOT NULL CHECK(position_eur > 0),
+                    position_eurc REAL NOT NULL CHECK(position_eurc > 0),
                     volume TEXT NOT NULL,
                     entry REAL NOT NULL CHECK(entry > 0),
                     stop_loss REAL NOT NULL CHECK(stop_loss > 0),
@@ -91,39 +92,49 @@ class OrderLifecycle:
                     approved_at TEXT,
                     simulated_at TEXT,
                     fill_price REAL,
-                    fee_eur REAL,
+                    fee_eurc REAL,
                     block_reason TEXT,
                     source_json TEXT NOT NULL,
                     result_json TEXT
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_orders_state
-                    ON orders(state, updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_orders_created
-                    ON orders(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_orders_eurc_state
+                    ON orders_eurc(state, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_orders_eurc_created
+                    ON orders_eurc(created_at DESC);
 
-                CREATE TABLE IF NOT EXISTS order_events (
+                CREATE TABLE IF NOT EXISTS order_events_eurc (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     order_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     event TEXT NOT NULL,
                     details_json TEXT NOT NULL,
-                    FOREIGN KEY(order_id) REFERENCES orders(id)
+                    FOREIGN KEY(order_id) REFERENCES orders_eurc(id)
                 );
 
-                CREATE TABLE IF NOT EXISTS order_controls (
+                CREATE TABLE IF NOT EXISTS order_controls_eurc (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
                 """
             )
+            # Retain an already enabled emergency stop when upgrading from EUR.
+            legacy_stop = "0"
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='order_controls'"
+            ).fetchone():
+                legacy = connection.execute(
+                    "SELECT value FROM order_controls WHERE key='emergency_stop'"
+                ).fetchone()
+                if legacy and legacy["value"] == "1":
+                    legacy_stop = "1"
             connection.execute(
                 """
-                INSERT OR IGNORE INTO order_controls(key, value, updated_at)
-                VALUES ('emergency_stop', '0', ?)
+                INSERT OR IGNORE INTO order_controls_eurc(key, value, updated_at)
+                VALUES ('emergency_stop', ?, ?)
                 """,
-                (self._now(),),
+                (legacy_stop, self._now()),
             )
 
     @staticmethod
@@ -145,13 +156,13 @@ class OrderLifecycle:
         if not isinstance(signal, Mapping):
             raise ValueError("proposal signal is missing")
 
-        pair = str(proposal.get("pair") or "").strip().upper()
-        api_pair = str(proposal.get("api_pair") or pair).strip().upper()
+        pair = require_eurc_pair(str(proposal.get("pair") or ""))
+        api_pair = require_eurc_pair(str(proposal.get("api_pair") or pair))
         if not pair or not api_pair:
             raise ValueError("proposal pair is missing")
 
         side = self._signal_side(str(signal.get("signal") or ""))
-        position_eur = float(proposal.get("position_eur") or 0.0)
+        position_eurc = float(proposal.get("position_eurc") or 0.0)
         entry = float(signal.get("last_price") or 0.0)
         stop_loss = float(signal.get("stop_loss") or 0.0)
         take_profit = float(signal.get("take_profit") or 0.0)
@@ -159,15 +170,15 @@ class OrderLifecycle:
 
         if confidence < self.limits.min_confidence:
             raise ValueError("signal confidence is below the hard minimum")
-        if position_eur > self.limits.max_position_eur:
-            raise ValueError("position exceeds the hard EUR limit")
+        if position_eurc > self.limits.max_position_eurc:
+            raise ValueError("position exceeds the hard EURC limit")
 
         validate_risk(
-            position_eur=position_eur,
+            position_eurc=position_eurc,
             entry=entry,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            limits=RiskLimits(max_position_eur=self.limits.max_position_eur),
+            limits=RiskLimits(max_position_eurc=self.limits.max_position_eurc),
         )
 
         execution = proposal.get("execution")
@@ -177,7 +188,7 @@ class OrderLifecycle:
         if slippage_bps > self.limits.max_slippage_bps:
             raise ValueError("estimated slippage exceeds the hard limit")
 
-        volume = position_eur / entry
+        volume = position_eurc / entry
         if volume <= 0:
             raise ValueError("calculated order volume is invalid")
 
@@ -185,7 +196,7 @@ class OrderLifecycle:
             "pair": pair,
             "api_pair": api_pair,
             "side": side,
-            "position_eur": round(position_eur, 2),
+            "position_eurc": round(position_eurc, 2),
             "volume": format(volume, ".12f").rstrip("0").rstrip("."),
             "entry": entry,
             "stop_loss": stop_loss,
@@ -200,7 +211,7 @@ class OrderLifecycle:
                 self._today(),
                 str(data["pair"]),
                 str(data["side"]),
-                f"{float(data['position_eur']):.2f}",
+                f"{float(data['position_eurc']):.2f}",
                 f"{float(data['entry']):.12g}",
                 f"{float(data['stop_loss']):.12g}",
                 f"{float(data['take_profit']):.12g}",
@@ -232,7 +243,7 @@ class OrderLifecycle:
     ) -> None:
         connection.execute(
             """
-            INSERT INTO order_events(order_id, created_at, event, details_json)
+            INSERT INTO order_events_eurc(order_id, created_at, event, details_json)
             VALUES (?, ?, ?, ?)
             """,
             (
@@ -246,7 +257,7 @@ class OrderLifecycle:
     @staticmethod
     def _control_value(connection: sqlite3.Connection, key: str) -> str | None:
         row = connection.execute(
-            "SELECT value FROM order_controls WHERE key = ?",
+            "SELECT value FROM order_controls_eurc WHERE key = ?",
             (key,),
         ).fetchone()
         return str(row["value"]) if row is not None else None
@@ -259,7 +270,7 @@ class OrderLifecycle:
     ) -> None:
         connection.execute(
             """
-            INSERT INTO order_controls(key, value, updated_at)
+            INSERT INTO order_controls_eurc(key, value, updated_at)
             VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
                 value = excluded.value,
@@ -282,9 +293,9 @@ class OrderLifecycle:
         except ValueError:
             return 0.0
 
-    def record_realized_pnl(self, pnl_delta_eur: float) -> float:
+    def record_realized_pnl(self, pnl_delta_eurc: float) -> float:
         """Record realized P&L for the daily-loss circuit breaker."""
-        delta = float(pnl_delta_eur)
+        delta = float(pnl_delta_eurc)
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             value = self._daily_realized_pnl_in(connection) + delta
@@ -300,14 +311,14 @@ class OrderLifecycle:
         if self._emergency_stop_in(connection):
             raise PermissionError("emergency stop is active")
         if self._daily_realized_pnl_in(connection) <= -abs(
-            self.limits.max_daily_loss_eur
+            self.limits.max_daily_loss_eurc
         ):
             raise PermissionError("daily loss limit is active")
 
     def _assert_capacity(
         self,
         connection: sqlite3.Connection,
-        additional_exposure_eur: float = 0.0,
+        additional_exposure_eurc: float = 0.0,
         *,
         count_new_order: bool = False,
     ) -> None:
@@ -315,8 +326,8 @@ class OrderLifecycle:
         row = connection.execute(
             f"""
             SELECT COUNT(*) AS pending_count,
-                   COALESCE(SUM(position_eur), 0.0) AS pending_exposure
-            FROM orders
+                   COALESCE(SUM(position_eurc), 0.0) AS pending_exposure
+            FROM orders_eurc
             WHERE state IN ({placeholders})
             """,
             tuple(PENDING_STATES),
@@ -326,16 +337,16 @@ class OrderLifecycle:
 
         if count_new_order and pending_count >= self.limits.max_pending_orders:
             raise PermissionError("maximum number of pending orders reached")
-        if pending_exposure + float(additional_exposure_eur) > (
-            self.limits.max_pending_exposure_eur + 1e-9
+        if pending_exposure + float(additional_exposure_eurc) > (
+            self.limits.max_pending_exposure_eurc + 1e-9
         ):
-            raise PermissionError("maximum pending EUR exposure reached")
+            raise PermissionError("maximum pending EURC exposure reached")
 
         day_prefix = self._today() + "%"
         simulations = connection.execute(
             """
             SELECT COUNT(*) AS count
-            FROM orders
+            FROM orders_eurc
             WHERE state = 'SIMULATED' AND simulated_at LIKE ?
             """,
             (day_prefix,),
@@ -358,7 +369,7 @@ class OrderLifecycle:
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                "SELECT * FROM orders WHERE fingerprint = ?",
+                "SELECT * FROM orders_eurc WHERE fingerprint = ?",
                 (fingerprint,),
             ).fetchone()
             if existing is not None:
@@ -368,7 +379,7 @@ class OrderLifecycle:
             self._assert_circuit_breakers(connection)
             self._assert_capacity(
                 connection,
-                data["position_eur"],
+                data["position_eurc"],
                 count_new_order=True,
             )
 
@@ -376,9 +387,9 @@ class OrderLifecycle:
             client_order_id = "nx" + fingerprint[:16]
             connection.execute(
                 """
-                INSERT INTO orders(
+                INSERT INTO orders_eurc(
                     id, client_order_id, fingerprint, created_at, updated_at,
-                    pair, api_pair, side, position_eur, volume, entry,
+                    pair, api_pair, side, position_eurc, volume, entry,
                     stop_loss, take_profit, confidence, state, source_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'VALIDATED', ?)
                 """,
@@ -391,7 +402,7 @@ class OrderLifecycle:
                     data["pair"],
                     data["api_pair"],
                     data["side"],
-                    data["position_eur"],
+                    data["position_eurc"],
                     data["volume"],
                     data["entry"],
                     data["stop_loss"],
@@ -408,7 +419,7 @@ class OrderLifecycle:
                 {"limits": asdict(self.limits)},
             )
             row = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (order_id,),
             ).fetchone()
             connection.commit()
@@ -421,7 +432,7 @@ class OrderLifecycle:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_circuit_breakers(connection)
             row = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (normalized_id,),
             ).fetchone()
             if row is None:
@@ -436,7 +447,7 @@ class OrderLifecycle:
             now = self._now()
             connection.execute(
                 """
-                UPDATE orders
+                UPDATE orders_eurc
                 SET state = 'APPROVED', approved_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
@@ -449,7 +460,7 @@ class OrderLifecycle:
                 {"approved_by": approved_by},
             )
             updated = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (normalized_id,),
             ).fetchone()
             connection.commit()
@@ -462,7 +473,7 @@ class OrderLifecycle:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_circuit_breakers(connection)
             row = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (normalized_id,),
             ).fetchone()
             if row is None:
@@ -484,7 +495,7 @@ class OrderLifecycle:
             entry = float(row["entry"])
             direction = 1.0 if row["side"] == "buy" else -1.0
             fill_price = entry * (1.0 + direction * applied_slippage / 10_000.0)
-            fee_eur = float(row["position_eur"]) * (
+            fee_eurc = float(row["position_eurc"]) * (
                 self.limits.estimated_entry_fee_bps / 10_000.0
             )
             result = {
@@ -492,28 +503,28 @@ class OrderLifecycle:
                 "live_order_submitted": False,
                 "client_order_id": row["client_order_id"],
                 "applied_slippage_bps": round(applied_slippage, 4),
-                "estimated_entry_fee_eur": round(fee_eur, 6),
+                "estimated_entry_fee_eurc": round(fee_eurc, 6),
             }
             now = self._now()
             connection.execute(
                 """
-                UPDATE orders
+                UPDATE orders_eurc
                 SET state = 'SIMULATED', simulated_at = ?, updated_at = ?,
-                    fill_price = ?, fee_eur = ?, result_json = ?
+                    fill_price = ?, fee_eurc = ?, result_json = ?
                 WHERE id = ?
                 """,
                 (
                     now,
                     now,
                     fill_price,
-                    fee_eur,
+                    fee_eurc,
                     json.dumps(result, ensure_ascii=False, sort_keys=True),
                     normalized_id,
                 ),
             )
             self._event(connection, normalized_id, "simulation_filled", result)
             updated = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (normalized_id,),
             ).fetchone()
             connection.commit()
@@ -537,7 +548,7 @@ class OrderLifecycle:
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (normalized_id,),
             ).fetchone()
             if row is None:
@@ -548,7 +559,7 @@ class OrderLifecycle:
             now = self._now()
             connection.execute(
                 """
-                UPDATE orders
+                UPDATE orders_eurc
                 SET state = 'REJECTED', block_reason = ?, updated_at = ?
                 WHERE id = ?
                 """,
@@ -556,7 +567,7 @@ class OrderLifecycle:
             )
             self._event(connection, normalized_id, "rejected", {"reason": reason})
             updated = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (normalized_id,),
             ).fetchone()
             connection.commit()
@@ -575,13 +586,13 @@ class OrderLifecycle:
             if enabled:
                 placeholders = ",".join("?" for _ in PENDING_STATES)
                 pending = connection.execute(
-                    f"SELECT id FROM orders WHERE state IN ({placeholders})",
+                    f"SELECT id FROM orders_eurc WHERE state IN ({placeholders})",
                     tuple(PENDING_STATES),
                 ).fetchall()
                 now = self._now()
                 connection.execute(
                     f"""
-                    UPDATE orders
+                    UPDATE orders_eurc
                     SET state = 'BLOCKED', block_reason = ?, updated_at = ?
                     WHERE state IN ({placeholders})
                     """,
@@ -605,7 +616,7 @@ class OrderLifecycle:
     def get(self, order_id: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM orders WHERE id = ?",
+                "SELECT * FROM orders_eurc WHERE id = ?",
                 (str(order_id).strip(),),
             ).fetchone()
             return self._row_to_dict(row)
@@ -614,7 +625,7 @@ class OrderLifecycle:
         safe_limit = max(1, min(int(limit), 100))
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM orders ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM orders_eurc ORDER BY created_at DESC LIMIT ?",
                 (safe_limit,),
             ).fetchall()
             return [self._row_to_dict(row) or {} for row in rows]
@@ -625,8 +636,8 @@ class OrderLifecycle:
             pending = connection.execute(
                 f"""
                 SELECT COUNT(*) AS count,
-                       COALESCE(SUM(position_eur), 0.0) AS exposure
-                FROM orders
+                       COALESCE(SUM(position_eurc), 0.0) AS exposure
+                FROM orders_eurc
                 WHERE state IN ({placeholders})
                 """,
                 tuple(PENDING_STATES),
@@ -634,20 +645,20 @@ class OrderLifecycle:
             simulations = connection.execute(
                 """
                 SELECT COUNT(*) AS count
-                FROM orders
+                FROM orders_eurc
                 WHERE state = 'SIMULATED' AND simulated_at LIKE ?
                 """,
                 (self._today() + "%",),
             ).fetchone()
             total = connection.execute(
-                "SELECT COUNT(*) AS count FROM orders"
+                "SELECT COUNT(*) AS count FROM orders_eurc"
             ).fetchone()
             return {
                 "emergency_stop": self._emergency_stop_in(connection),
                 "pending_orders": int(pending["count"] or 0),
-                "pending_exposure_eur": round(float(pending["exposure"] or 0.0), 2),
+                "pending_exposure_eurc": round(float(pending["exposure"] or 0.0), 2),
                 "simulations_today": int(simulations["count"] or 0),
-                "daily_realized_pnl_eur": round(
+                "daily_realized_pnl_eurc": round(
                     self._daily_realized_pnl_in(connection),
                     2,
                 ),
@@ -655,3 +666,4 @@ class OrderLifecycle:
                 "limits": asdict(self.limits),
                 "live_order_submission_enabled": False,
             }
+

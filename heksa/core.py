@@ -5,10 +5,10 @@ from pathlib import Path
 
 from . import __version__
 from .journal import SignalJournal
-from .pair_scanner import best_eur_pairs
-from .portfolio import fetch_portfolio_eur
+from .pair_scanner import best_eurc_pairs
+from .portfolio import fetch_portfolio_eurc
 from .tasks import TaskQueue
-from .trading_runner import build_best_eur_proposals
+from .trading_runner import build_best_eurc_proposals
 
 
 class SecurityAgent:
@@ -17,8 +17,8 @@ class SecurityAgent:
     def __init__(self):
         self._allowed = {
             "system": frozenset({"status", "time"}),
-            "market": frozenset({"eur_pairs", "signals"}),
-            "portfolio": frozenset({"eur_value"}),
+            "market": frozenset({"eurc_pairs", "signals"}),
+            "portfolio": frozenset({"eurc_value"}),
             "performance": frozenset({"summary", "history", "close"}),
         }
 
@@ -45,10 +45,10 @@ class MarketAgent:
         self.journal = journal
 
     def run(self, action):
-        if action == "eur_pairs":
-            pairs = best_eur_pairs(limit=5)
+        if action == "eurc_pairs":
+            pairs = best_eurc_pairs(limit=5, allowed_assets=self.journal.market_selection())
             if not pairs:
-                return "Brak par EUR spełniających aktualne filtry."
+                return "Brak par EURC spełniających aktualne filtry."
 
             rows = []
             for index, item in enumerate(pairs, start=1):
@@ -57,12 +57,12 @@ class MarketAgent:
                     f"score {item['opportunity_score']:.2f} | "
                     f"24h {item['range_24h_pct']:.2f}% | "
                     f"spread {item['spread_bps']:.1f} bps | "
-                    f"vol €{item['quote_volume_24h_eur']:.0f}"
+                    f"vol EURC {item['quote_volume_24h_eurc']:.0f}"
                 )
             return "\n".join(rows)
 
         if action == "signals":
-            result = build_best_eur_proposals(limit=5, journal=self.journal)
+            result = build_best_eurc_proposals(limit=5, journal=self.journal)
             rows = []
             for index, item in enumerate(result["proposals"], start=1):
                 signal = item.get("signal") or {}
@@ -74,7 +74,7 @@ class MarketAgent:
                     f"{index}. {item['pair']} | {item['status']} | "
                     f"{signal.get('signal', 'N/A')} | "
                     f"conf {float(signal.get('confidence', 0.0)):.0f}% | "
-                    f"€{float(item.get('position_eur', 0.0)):.2f} | "
+                    f"EURC {float(item.get('position_eurc', 0.0)):.2f} | "
                     f"hist x{float(item.get('history_multiplier', 1.0)):.2f} | "
                     f"score {float(item.get('final_score', 0.0)):.2f}"
                     f"{journal_text}"
@@ -88,17 +88,17 @@ class PortfolioAgent:
     name = "portfolio"
 
     def run(self, action):
-        if action != "eur_value":
+        if action != "eurc_value":
             raise ValueError("Nieznana akcja portfela.")
 
-        snapshot = fetch_portfolio_eur()
-        lines = [f"Portfel: €{snapshot['total_eur']:.2f}"]
+        snapshot = fetch_portfolio_eurc()
+        lines = [f"Portfel: EURC {snapshot['total_eurc']:.2f}"]
         for item in snapshot["holdings"][:10]:
             lines.append(
-                f"{item['asset']}: {item['amount']:.8g} | €{item['value_eur']:.2f}"
+                f"{item['asset']}: {item['amount']:.8g} | EURC {item['value_eurc']:.2f}"
             )
         if snapshot["unpriced"]:
-            lines.append(f"Bez wyceny EUR: {len(snapshot['unpriced'])}")
+            lines.append(f"Bez wyceny EURC: {len(snapshot['unpriced'])}")
         return "\n".join(lines)
 
 
@@ -116,7 +116,7 @@ class PerformanceAgent:
                 f"wygrane: {data['wins']} | "
                 f"przegrane: {data['losses']} | "
                 f"skuteczność {data['win_rate_pct']:.1f}% | "
-                f"P&L €{data['pnl_eur']:.2f}"
+                f"P&L EURC {data['pnl_eurc']:.2f}"
             )
 
         if action == "history":
@@ -126,8 +126,8 @@ class PerformanceAgent:
 
             rows = []
             for item in items:
-                pnl = item.get("pnl_eur")
-                pnl_text = f" | P&L €{float(pnl):.2f}" if pnl is not None else ""
+                pnl = item.get("pnl_eurc")
+                pnl_text = f" | P&L EURC {float(pnl):.2f}" if pnl is not None else ""
                 rows.append(
                     f"{item['created']} | {item['pair']} | {item['status']} | "
                     f"conf {float(item.get('confidence') or 0.0):.0f}%"
@@ -183,18 +183,18 @@ class HeksaCore:
         with (self.data_dir / "audit.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def record_outcome(self, signal_id, exit_eur):
+    def record_outcome(self, signal_id, exit_eurc):
         try:
             self.security.authorize("performance", "close")
         except PermissionError:
             self._audit("performance", "close", "blocked")
             raise
         self._audit("performance", "close", "authorized")
-        result = self.journal.close(signal_id, float(exit_eur))
+        result = self.journal.close(signal_id, float(exit_eurc))
         self._audit("performance", "close", "completed")
         return (
             f"{result['signal_id'][:8]} | {result['result']} | "
-            f"P&L €{result['pnl_eur']:.2f}"
+            f"P&L EURC {result['pnl_eurc']:.2f}"
         )
 
     def dispatch(self, agent, action):
@@ -221,7 +221,7 @@ class HeksaCore:
             if len(parts) == 2 and parts[1] in {"status", "time"}:
                 return "Dodano zadanie: " + self.queue_task("system", parts[1])
             if len(parts) == 2 and parts[1] in {"markets", "pairs"}:
-                return "Dodano zadanie: " + self.queue_task("market", "eur_pairs")
+                return "Dodano zadanie: " + self.queue_task("market", "eurc_pairs")
             return "Użycie: queue status | queue time | queue markets"
 
         if normalized == "tasks":
@@ -235,7 +235,7 @@ class HeksaCore:
 
         if parts and parts[0] == "close":
             if len(parts) != 3:
-                return "Użycie: close <pełne_id_sygnalu> <cena_wyjścia_EUR>"
+                return "Użycie: close <pełne_id_sygnalu> <cena_wyjścia_EURC>"
             try:
                 return self.record_outcome(parts[1], float(parts[2].replace(",", ".")))
             except ValueError as error:
@@ -253,14 +253,14 @@ class HeksaCore:
         if normalized in {"status", "time"}:
             return self.dispatch("system", normalized)
 
-        if normalized in {"markets", "pairs", "eur", "best"}:
-            return self.dispatch("market", "eur_pairs")
+        if normalized in {"markets", "pairs", "eurc", "best"}:
+            return self.dispatch("market", "eurc_pairs")
 
         if normalized in {"signals", "sygnaly", "sygnały", "candidates"}:
             return self.dispatch("market", "signals")
 
         if normalized in {"portfolio", "portfel", "balance", "saldo"}:
-            return self.dispatch("portfolio", "eur_value")
+            return self.dispatch("portfolio", "eurc_value")
 
         if normalized in {"pnl", "performance", "wyniki"}:
             return self.dispatch("performance", "summary")

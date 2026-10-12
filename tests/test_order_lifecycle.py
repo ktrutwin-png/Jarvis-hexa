@@ -7,8 +7,8 @@ from heksa.order_lifecycle import ExecutionLimits, OrderLifecycle
 
 def proposal(
     *,
-    pair: str = "XRP/EUR",
-    position_eur: float = 5.0,
+    pair: str = "XRP/EURC",
+    position_eurc: float = 5.0,
     confidence: float = 72.0,
     entry: float = 1.0,
 ) -> dict:
@@ -16,7 +16,7 @@ def proposal(
         "pair": pair,
         "api_pair": pair.replace("/", ""),
         "status": "PROPOSAL",
-        "position_eur": position_eur,
+        "position_eurc": position_eurc,
         "requires_user_approval": True,
         "signal": {
             "signal": "BUY_CANDIDATE",
@@ -47,7 +47,7 @@ def test_manual_approval_and_simulation_are_persistent(tmp_path):
     simulated = lifecycle.simulate(validated["id"])
     assert simulated["state"] == "SIMULATED"
     assert simulated["fill_price"] > 1.0
-    assert simulated["fee_eur"] > 0
+    assert simulated["fee_eurc"] > 0
     assert simulated["result"]["live_order_submitted"] is False
 
     reopened = OrderLifecycle(tmp_path / "orders.sqlite3")
@@ -76,11 +76,11 @@ def test_emergency_stop_blocks_pending_and_new_orders(tmp_path):
     assert lifecycle.get(order["id"])["state"] == "BLOCKED"
 
     with pytest.raises(PermissionError, match="emergency stop"):
-        lifecycle.create_from_proposal(proposal(pair="ETH/EUR", entry=2000.0))
+        lifecycle.create_from_proposal(proposal(pair="ETH/EURC", entry=2000.0))
 
     lifecycle.set_emergency_stop(False)
     replacement = lifecycle.create_from_proposal(
-        proposal(pair="ETH/EUR", entry=2000.0)
+        proposal(pair="ETH/EURC", entry=2000.0)
     )
     assert replacement["state"] == "VALIDATED"
 
@@ -89,23 +89,23 @@ def test_hard_pending_exposure_limit_cannot_be_bypassed(tmp_path):
     lifecycle = OrderLifecycle(
         tmp_path / "orders.sqlite3",
         limits=ExecutionLimits(
-            max_position_eur=10.0,
+            max_position_eurc=10.0,
             max_pending_orders=3,
-            max_pending_exposure_eur=10.0,
+            max_pending_exposure_eurc=10.0,
         ),
     )
-    lifecycle.create_from_proposal(proposal(position_eur=6.0))
+    lifecycle.create_from_proposal(proposal(position_eurc=6.0))
 
     with pytest.raises(PermissionError, match="exposure"):
         lifecycle.create_from_proposal(
-            proposal(pair="ETH/EUR", position_eur=6.0, entry=2000.0)
+            proposal(pair="ETH/EURC", position_eurc=6.0, entry=2000.0)
         )
 
 
 def test_daily_loss_circuit_breaker_blocks_new_orders(tmp_path):
     lifecycle = OrderLifecycle(
         tmp_path / "orders.sqlite3",
-        limits=ExecutionLimits(max_daily_loss_eur=3.0),
+        limits=ExecutionLimits(max_daily_loss_eurc=3.0),
     )
     assert lifecycle.record_realized_pnl(-3.0) == -3.0
 
@@ -124,3 +124,4 @@ def test_non_actionable_or_weak_signal_is_rejected(tmp_path):
     waiting["status"] = "WAIT"
     with pytest.raises(ValueError, match="PROPOSAL"):
         lifecycle.create_from_proposal(waiting)
+

@@ -1,6 +1,6 @@
 [project]
 name = "nextrade-android"
-version = "0.1.0"
+version = "0.2.0"
 description = "NexTrade - bezpieczny asystent rynku kryptowalut na Androida"
 requires-python = ">=3.10"
 authors = [{name = "NexTrade"}]
@@ -25,7 +25,7 @@ include = ["heksa*", "android_app*"]
 org = "com.heksa"
 product = "NexTrade"
 company = "Heksa"
-build_number = 1
+build_number = 2
 app.module = "main"
 app.path = "."
 app.exclude = [
@@ -51,3 +51,4 @@ legacy_packaging = false
 
 [tool.flet.android.permission]
 "android.permission.INTERNET" = true
+

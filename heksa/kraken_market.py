@@ -135,12 +135,12 @@ def fetch_close_prices(pair: str, interval: int = 5, limit: int = 100) -> list[f
     return closes[-limit:]
 
 
-def fetch_spot_pairs(quote: str = "EUR") -> dict[str, dict]:
+def fetch_spot_pairs(quote: str = "EURC") -> dict[str, dict]:
     """Return active Kraken spot pairs for the requested display quote currency.
 
     Kraken uses legacy internal asset codes in some REST fields, while wsname
     exposes the human-readable market name. Filtering by the display name
-    keeps EUR discovery independent of those internal codes.
+    keeps discovery independent of those internal codes.
     """
     wanted_quote = quote.strip().upper()
     pairs = _public_get(

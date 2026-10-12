@@ -5,10 +5,10 @@ NexTrade jest rozwijany **wyłącznie jako aplikacja na Androida**. Rdzeń Heksy
 ## Zakres zaimplementowanego kodu
 
 - mobilny interfejs Flet przeznaczony na Androida,
-- ekrany: Start, Sygnały, Portfel i Ustawienia,
-- skanowanie aktywnych par kryptowalutowych rozliczanych w EUR,
+- ekrany: Start, Sygnały, Portfel, Ustawienia i Rynki,
+- skanowanie aktywnych par kryptowalutowych rozliczanych wyłącznie w EURC,
 - ranking sygnałów z uwzględnieniem jakości rynku, kosztów, płynności, ryzyka i historii wyników,
-- wycena salda Kraken w EUR z oznaczeniem aktywów bez dostępnej wyceny,
+- wycena salda Kraken w EURC z oznaczeniem aktywów bez dostępnej wyceny,
 - blokada nakładających się skanowań rynku,
 - przycisk „Odrzuć” przy propozycji: trwały zapis decyzji i natychmiastowy ponowny skan,
 - konfigurowalny czas pomijania odrzuconej pary, odporny na restart aplikacji,
@@ -22,6 +22,18 @@ NexTrade jest rozwijany **wyłącznie jako aplikacja na Androida**. Rdzeń Heksy
 Aplikacja analizuje rynek, pokazuje propozycje i odczytuje portfel. **Prawdziwe składanie zleceń jest obecnie wyłączone.** Zostanie uruchomione dopiero po dodaniu pełnego cyklu zlecenia, twardych limitów ryzyka, ochrony przed duplikacją i ręcznego zatwierdzania.
 
 Dla NexTrade należy utworzyć osobny klucz Kraken z minimalnymi uprawnieniami. Nigdy nie wolno włączać prawa do wypłat. Kluczy, haseł i innych sekretów nie umieszczamy w repozytorium ani dziennikach.
+
+## Waluta handlu: EURC
+
+Skaner wybiera wyłącznie aktywne pary krypto/EURC zwrócone przez API Kraken. Kwoty propozycji, limity, koszty i dziennik wyników są w EURC. Brak odpowiedniego rynku daje pusty wynik; aplikacja nie przełącza się automatycznie na EUR ani inną walutę. Również walidacja zleceń odrzuca pary z inną walutą kwotowaną lub walutą tradycyjną jako aktywem bazowym.
+
+Portfel również pokazuje kwoty w EURC. Wycena korzysta z bezpośrednich kursów EURC, a dla pozostałych aktywów może wyliczać wartość przez bieżące kursy EUR i EURC/EUR. Jest to tylko odczyt danych do wyceny, nie trasa handlu. Nie zakładamy sztywnego kursu 1 EURC = 1 EUR. Stare wpisy w EUR pozostają w dotychczasowych tabelach SQLite; nowe tabele EURC nie mieszają ich z wynikami EURC. Ustawienie czasu odrzucania zostaje zachowane.
+
+## Wybór rynków
+
+Domyślnie bot bierze pod uwagę **wszystkie aktywne pary krypto/EURC**, wykrywane z API Kraken. Nowe pary nie wymagają zmiany kodu. Filtry płynności, spreadu, kosztów i strategii nadal obowiązują. Na ekranie Sygnały najwyżej oceniona propozycja jest wyróżniona; brak odpowiedniego sygnału nie wymusza transakcji.
+
+Ekran **Rynki** pokazuje dostępność i pozwala wyłączyć tryb automatyczny oraz zapisać własny wybór. Lista obserwowana obejmuje XLM, XRP, ETH, SOL, BTC, ALGO, HBAR, ZBCN, FLR, XDC, ADA, LINK i AVAX oraz wszystkie inne aktywne rynki EURC wykryte w API. Nazwa na liście nie oznacza, że Kraken udostępnia bezpośrednią parę: niedostępne pozycje są wyraźnie oznaczone i nie trafiają do skanera. BTC jest mapowany na symbol XBT stosowany przez Kraken. Wybór jest zachowywany po restarcie.
 
 ## Odrzucanie propozycji w aplikacji
 

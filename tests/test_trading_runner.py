@@ -37,18 +37,18 @@ class TradingRunnerTests(unittest.TestCase):
                 return_value=neutral_test_regime(),
             ),
         ):
-            proposal = build_market_proposal("XRPEUR")
+            proposal = build_market_proposal("XRPEURC")
 
         self.assertEqual(proposal["status"], "PROPOSAL")
         self.assertTrue(proposal["requires_user_approval"])
         self.assertFalse(proposal["live_order_submitted"])
-        self.assertEqual(proposal["pair"], "XRPEUR")
+        self.assertEqual(proposal["pair"], "XRPEURC")
 
     @patch("heksa.trading_runner.fetch_close_prices")
     def test_wait_signal_does_not_request_approval(self, fetch):
         fetch.return_value = [1.0] * 30
 
-        result = build_market_proposal("XRPEUR")
+        result = build_market_proposal("XRPEURC")
 
         self.assertEqual(result["status"], "WAIT")
         self.assertFalse(result["requires_user_approval"])
@@ -58,8 +58,9 @@ class TradingRunnerTests(unittest.TestCase):
     def test_market_data_failure_propagates(self, fetch):
         fetch.side_effect = RuntimeError("market data unavailable")
         with self.assertRaises(RuntimeError):
-            build_market_proposal("XRPEUR")
+            build_market_proposal("XRPEURC")
 
 
 if __name__ == "__main__":
     unittest.main()
+
