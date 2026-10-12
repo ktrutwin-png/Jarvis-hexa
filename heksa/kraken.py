@@ -13,6 +13,9 @@ from typing import Any
 import krakenex
 
 
+REQUEST_TIMEOUT_SECONDS = 15
+
+
 @dataclass(frozen=True)
 class OrderProposal:
     pair: str
@@ -37,7 +40,9 @@ class KrakenClient:
         self.api = krakenex.API(key=resolved_key, secret=resolved_secret)
 
     def balances(self) -> dict[str, str]:
-        response: dict[str, Any] = self.api.query_private("Balance")
+        response: dict[str, Any] = self.api.query_private(
+            "Balance", timeout=REQUEST_TIMEOUT_SECONDS
+        )
         errors = response.get("error") or []
         if errors:
             raise RuntimeError("; ".join(errors))
@@ -62,6 +67,7 @@ class KrakenClient:
                 "volume": volume,
                 "validate": True,
             },
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         errors = response.get("error") or []
         if errors:
