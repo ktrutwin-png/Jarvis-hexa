@@ -7,6 +7,8 @@ not enabled.
 from __future__ import annotations
 
 import asyncio
+import os
+from pathlib import Path
 from typing import Any
 
 import flet as ft
@@ -38,10 +40,13 @@ DANGER = "#FF6376"
 class NexTradeAndroidApp:
     def __init__(self, page: ft.Page) -> None:
         self.page = page
-        self.core = HeksaCore()
+        storage_dir = os.environ.get("FLET_APP_STORAGE_DATA")
+        data_dir = Path(storage_dir) / "heksa" if storage_dir else None
+        self.core = HeksaCore(data_dir=data_dir)
         self.last_scan: dict[str, Any] | None = None
         self.portfolio_snapshot: dict[str, Any] | None = None
         self.credentials_configured = False
+        self.scan_in_progress = False
 
         self.storage = fss.SecureStorage(
             android_options=fss.AndroidOptions(
@@ -247,6 +252,7 @@ class NexTradeAndroidApp:
                     "Skanuj rynek EUR",
                     icon=ft.Icons.REFRESH,
                     on_click=self._refresh_signals,
+                    disabled=self.scan_in_progress,
                 ),
             ]
         )
@@ -277,6 +283,7 @@ class NexTradeAndroidApp:
                 "Odśwież sygnały",
                 icon=ft.Icons.REFRESH,
                 on_click=self._refresh_signals,
+                disabled=self.scan_in_progress,
             ),
         ]
 
@@ -390,12 +397,16 @@ class NexTradeAndroidApp:
             return self._screen(controls)
 
         total = float(self.portfolio_snapshot.get("total_eur") or 0.0)
+        unpriced = self.portfolio_snapshot.get("unpriced") or []
         controls.append(
             self._card(
                 ft.Column(
                     spacing=3,
                     controls=[
-                        ft.Text("Łączna wycena", color=MUTED),
+                        ft.Text(
+                            "Częściowa wycena" if unpriced else "Łączna wycena",
+                            color=MUTED,
+                        ),
                         ft.Text(
                             f"€{total:,.2f}",
                             size=30,
@@ -407,6 +418,36 @@ class NexTradeAndroidApp:
                 border_color=SUCCESS,
             )
         )
+
+        if unpriced:
+            controls.append(
+                self._card(
+                    ft.Column(
+                        spacing=6,
+                        controls=[
+                            ft.Text(
+                                "Nie wszystkie aktywa mają wycenę w EUR.",
+                                color=WARNING,
+                                weight=ft.FontWeight.BOLD,
+                            ),
+                            ft.Text(
+                                "Poniższe salda nie są uwzględnione w podanej sumie.",
+                                color=MUTED,
+                                size=12,
+                            ),
+                            *[
+                                ft.Text(
+                                    f"{item.get('asset', '—')}: "
+                                    f"{float(item.get('amount') or 0.0):.8g} • brak wyceny",
+                                    color=MUTED,
+                                )
+                                for item in unpriced
+                            ],
+                        ],
+                    ),
+                    border_color=WARNING,
+                )
+            )
 
         for holding in self.portfolio_snapshot.get("holdings") or []:
             controls.append(
@@ -506,8 +547,12 @@ class NexTradeAndroidApp:
         )
 
     async def _refresh_signals(self, _event: ft.Event | None = None) -> None:
-        self._show_busy("Skanuję rynki EUR…")
+        if self.scan_in_progress:
+            return
+        self.scan_in_progress = True
         try:
+            self._show_view(self.navigation.selected_index)
+            self._show_busy("Skanuję rynki EUR…")
             result = await asyncio.to_thread(
                 lambda: build_best_eur_proposals(
                     limit=5,
@@ -519,6 +564,9 @@ class NexTradeAndroidApp:
             self._show_view(1)
         except Exception as error:
             self._show_message(f"Skanowanie nie powiodło się: {error}", DANGER)
+        finally:
+            self.scan_in_progress = False
+            self._show_view(self.navigation.selected_index)
 
     async def _refresh_credentials_status(self) -> None:
         try:
