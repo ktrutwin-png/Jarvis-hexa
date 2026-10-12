@@ -2,15 +2,16 @@
 
 NexTrade jest rozwijany **wyłącznie jako aplikacja na Androida**. Rdzeń Heksy odpowiada za analizę rynku, kontrolę bezpieczeństwa i lokalny dziennik operacji.
 
-## Co już działa
+## Zakres zaimplementowanego kodu
 
 - mobilny interfejs Flet przeznaczony na Androida,
 - ekrany: Start, Sygnały, Portfel i Ustawienia,
 - skanowanie aktywnych par kryptowalutowych rozliczanych w EUR,
 - ranking sygnałów z uwzględnieniem jakości rynku, kosztów, płynności, ryzyka i historii wyników,
-- wycena salda Kraken w EUR,
+- wycena salda Kraken w EUR z oznaczeniem aktywów bez dostępnej wyceny,
+- blokada nakładających się skanowań rynku,
 - szyfrowane przechowywanie kluczy Kraken przez Android Keystore,
-- lokalny dziennik sygnałów, decyzji i wyników,
+- lokalny dziennik sygnałów, decyzji i wyników w trwałym katalogu danych aplikacji,
 - Security Agent kontrolujący dozwolone działania,
 - automatyczne budowanie instalacyjnego APK w GitHub Actions.
 
@@ -22,7 +23,7 @@ Dla NexTrade należy utworzyć osobny klucz Kraken z minimalnymi uprawnieniami. 
 
 ## Budowanie APK
 
-Każda zmiana dotycząca aplikacji Android, rdzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Gotowy plik jest publikowany jako artefakt `NexTrade-Android-APK` w GitHub Actions.
+Każda zmiana dotycząca aplikacji Android, rdzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Po pomyślnym zakończeniu budowy plik jest publikowany jako artefakt `NexTrade-Android-APK` w GitHub Actions.
 
 Ręczne uruchomienie budowy:
 
