@@ -26,7 +26,7 @@ org = "com.heksa"
 product = "NexTrade"
 company = "Heksa"
 build_number = 1
-app.module = "android_app.main"
+app.module = "main"
 app.path = "."
 app.exclude = [
     ".git",
