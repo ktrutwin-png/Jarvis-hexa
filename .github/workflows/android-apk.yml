@@ -43,7 +43,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
         with:
           python-version: "3.12"
           enable-cache: true
@@ -52,7 +52,7 @@ jobs:
           distribution: temurin
           java-version: "17"
       - name: Cache Flutter SDK and Flet downloads
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/flutter/3.44.8

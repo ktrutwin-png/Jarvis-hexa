@@ -48,14 +48,17 @@ class NexTradeBackgroundService extends FletService {
           ),
         );
         if (!initialized) return false;
-        return await FlutterBackground.enableBackgroundExecution();
+        final started = await FlutterBackground.enableBackgroundExecution();
+        if (!started) await FlutterBackground.disableBackgroundExecution();
+        return started;
       case 'stop':
         if (FlutterBackground.isBackgroundExecutionEnabled) {
           await FlutterBackground.disableBackgroundExecution();
         }
         return true;
       case 'is_enabled':
-        return FlutterBackground.isBackgroundExecutionEnabled;
+        return FlutterBackground.isBackgroundExecutionEnabled &&
+            await FlutterBackground.hasPermissions;
       default:
         throw ArgumentError('Unknown background method: $name');
     }
