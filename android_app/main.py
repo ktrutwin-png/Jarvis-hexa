@@ -26,7 +26,7 @@ from heksa.portfolio import fetch_portfolio_eurc
 
 
 APP_NAME = "NexTrade"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 PROPOSAL_NOTIFICATION_ID = 9002
 KRAKEN_API_KEY = "nextrade.kraken.api_key"
 KRAKEN_PRIVATE_KEY = "nextrade.kraken.private_key"
@@ -316,7 +316,8 @@ class NexTradeAndroidApp:
             ft.Text(f"Skanowanie w tle: {state}", color=TEXT, weight=ft.FontWeight.BOLD),
             ft.Text(
                 "Skan co 60 s po zakończeniu poprzedniego. Telefon może mieć zgaszony ekran. "
-                "Włącz powiadomienia i zezwól na pracę bez optymalizacji baterii.",
+                "Włącz powiadomienia i zezwól na pracę bez optymalizacji baterii. "
+                "Pozostaw NexTrade na liście ostatnich aplikacji — usunięcie go z tej listy zatrzymuje skaner.",
                 color=MUTED, size=12,
             ),
             ft.Button(

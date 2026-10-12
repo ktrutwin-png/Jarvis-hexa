@@ -61,6 +61,16 @@ Monitor wysyła propozycje zakupu za EURC; sygnał sprzedaży sam w sobie nie ur
 
 Zgaszenie ekranu pozostawia usługę włączoną. Usunięcie aplikacji z listy ostatnich aplikacji zatrzymuje użyty komponent usługi — po tym trzeba otworzyć NexTrade i ponownie uruchomić monitorowanie.
 
+## Przerwane połączenie podczas przyszłego zakupu
+
+`heksa/entry_journal.py` dodaje trwały dziennik prób wejścia przygotowany dla wykonawcy zleceń. Po ponownej kontroli dokładnie zatwierdzonych warunków zapisuje jedną próbę w SQLite **przed** wysłaniem żądania. Równoczesne kliknięcia, restart i utrata odpowiedzi zwracają tę samą próbę, bez ponownej zgody na wysłanie. Sam identyfikator Kraken nie zastępuje tej blokady: jego unikalność jest sprawdzana dla zleceń otwartych, więc nie chroni przed powtórzeniem już zakończonego zakupu.
+
+Odtworzenie stanu odczytuje zarówno `OpenOrders`, jak i `ClosedOrders`, z filtrem `cl_ord_id`. Brak rekordu, błąd odczytu albo niepełna historia pozostawiają stan niepewny i blokują kolejne wejście. Potwierdzenie przyjęcia zlecenia nie jest traktowane jako wykonanie. Częściowe wykonanie, po którym resztę anulowano, pozostaje nabytą pozycją; spóźniona odpowiedź nie zeruje potwierdzonych wykonań. Dopiero potwierdzone anulowanie lub wygaśnięcie z **zerowym** wykonaniem umożliwia nową propozycję i nową zgodę.
+
+To nadal część przygotowywanego wykonawcy: nie jest połączona z aktywnym przyciskiem, nie wysyła zleceń i nie rozlicza zysku. Baza dotyczy jednego konta; przyszła integracja musi zablokować zmianę konta przy nierozliczonej próbie lub pozycji, sprawdzić reguły pary i potwierdzić ochronę wyjścia. Wykonany zakup pozostaje zablokowany dla kolejnego wejścia do czasu wdrożenia zarządzania pozycją. Kwota `reported_fee` z rekordu giełdy nie jest jeszcze księgowana jako prowizja w EURC bez uzgodnienia waluty opłaty.
+
+Źródła integracji: [identyfikatory klienta](https://docs.kraken.com/api/blog/cl-ord-id/), [zlecenia otwarte](https://docs.kraken.com/api-reference/account-data/get-open-orders), [zlecenia zakończone](https://docs.kraken.com/api-reference/account-data/get-closed-orders).
+
 ## Budowanie APK
 
 Każda zmiana dotycząca aplikacji Android, rdzenia, natywnego rozszerzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Po pomyślnym zakończeniu budowy plik jest publikowany jako artefakt `NexTrade-Android-APK.zip` w GitHub Actions.

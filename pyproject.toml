@@ -1,6 +1,6 @@
 [project]
 name = "nextrade-android"
-version = "0.3.1"
+version = "0.3.2"
 description = "NexTrade - bezpieczny asystent rynku kryptowalut na Androida"
 requires-python = ">=3.11"
 authors = [{name = "NexTrade"}]

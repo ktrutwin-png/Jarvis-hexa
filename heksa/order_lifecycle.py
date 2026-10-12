@@ -541,7 +541,7 @@ class OrderLifecycle:
         proposal: Mapping[str, Any],
         approved_by: str = "android_user",
     ) -> dict[str, Any]:
-        """Convenience path used by the Android manual-approval button."""
+        """Legacy simulation helper; not connected to Android's Inwestuj button."""
         order = self.create_from_proposal(proposal)
         if order.get("state") == "VALIDATED":
             order = self.approve(str(order["id"]), approved_by=approved_by)

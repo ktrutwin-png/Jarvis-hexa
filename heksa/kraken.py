@@ -7,6 +7,8 @@ storage) or read from environment variables. They must never be committed.
 from __future__ import annotations
 
 import os
+import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,6 +50,40 @@ class KrakenClient:
         if errors:
             raise RuntimeError("; ".join(errors))
         return response.get("result", {})
+
+    def orders_by_client_id(self, client_order_id: str) -> dict[str, dict]:
+        """Read this app's UUID-tagged open and closed orders; never resubmit.
+
+        A filled order can disappear from OpenOrders before a timed-out caller
+        reads it. ClosedOrders must therefore also be queried. Unexpected extra
+        history/pagination is ambiguous, not evidence that no order exists.
+        """
+        if str(uuid.UUID(client_order_id)) != client_order_id:
+            raise ValueError("expected a canonical client order UUID")
+        orders = {}
+        for endpoint, key in (("OpenOrders", "open"), ("ClosedOrders", "closed")):
+            response = self.api.query_private(
+                endpoint, {"cl_ord_id": client_order_id, "trades": True},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            if not isinstance(response, Mapping) or response.get("error") != []:
+                raise RuntimeError("Order status lookup failed")
+            result = response.get("result")
+            found = result.get(key) if isinstance(result, Mapping) else None
+            if not isinstance(found, Mapping):
+                raise RuntimeError("Invalid order status response")
+            if key == "closed":
+                count = result.get("count")
+                if isinstance(count, bool) or not isinstance(count, int) or count != len(found):
+                    raise RuntimeError("Incomplete closed-order lookup")
+                if (result.get("cursor") or {}).get("next"):
+                    raise RuntimeError("Incomplete closed-order lookup")
+            for order_id, order in found.items():
+                if not isinstance(order, Mapping) or order.get("cl_ord_id") != client_order_id:
+                    raise RuntimeError("Order identity mismatch")
+                # A close between these two reads appears in both collections.
+                orders[order_id] = dict(order)
+        return orders
 
     def prepare_order(self, pair: str, side: str, volume: str) -> OrderProposal:
         """Validate an order with Kraken without submitting it."""
