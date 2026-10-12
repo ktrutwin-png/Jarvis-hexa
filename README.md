@@ -10,6 +10,8 @@ NexTrade jest rozwijany **wyłącznie jako aplikacja na Androida**. Rdzeń Heksy
 - ranking sygnałów z uwzględnieniem jakości rynku, kosztów, płynności, ryzyka i historii wyników,
 - wycena salda Kraken w EUR z oznaczeniem aktywów bez dostępnej wyceny,
 - blokada nakładających się skanowań rynku,
+- przycisk „Odrzuć” przy propozycji: trwały zapis decyzji i natychmiastowy ponowny skan,
+- konfigurowalny czas pomijania odrzuconej pary, odporny na restart aplikacji,
 - szyfrowane przechowywanie kluczy Kraken przez Android Keystore,
 - lokalny dziennik sygnałów, decyzji i wyników w trwałym katalogu danych aplikacji,
 - Security Agent kontrolujący dozwolone działania,
@@ -20,6 +22,12 @@ NexTrade jest rozwijany **wyłącznie jako aplikacja na Androida**. Rdzeń Heksy
 Aplikacja analizuje rynek, pokazuje propozycje i odczytuje portfel. **Prawdziwe składanie zleceń jest obecnie wyłączone.** Zostanie uruchomione dopiero po dodaniu pełnego cyklu zlecenia, twardych limitów ryzyka, ochrony przed duplikacją i ręcznego zatwierdzania.
 
 Dla NexTrade należy utworzyć osobny klucz Kraken z minimalnymi uprawnieniami. Nigdy nie wolno włączać prawa do wypłat. Kluczy, haseł i innych sekretów nie umieszczamy w repozytorium ani dziennikach.
+
+## Odrzucanie propozycji w aplikacji
+
+Na ekranie **Sygnały** przycisk **Odrzuć** zapisuje decyzję dla konkretnego identyfikatora propozycji i uruchamia nowy skan. Odrzucona para jest pomijana w obu kierunkach, domyślnie przez 30 minut. W **Ustawieniach** można wybrać 1–1440 minut; zmiana dotyczy kolejnych odrzuceń. Kilkukrotne dotknięcie nie tworzy kilku decyzji ani nie przedłuża czasu pomijania. Decyzja pozostaje zapisana także wtedy, gdy ponowny skan nie powiedzie się z powodu połączenia.
+
+Nowa propozycja nadal musi spełniać kryteria strategii; odrzucenie nie gwarantuje lepszej okazji. Odrzucenia nie zamykają pozycji ani nie są liczone jako wyniki transakcji. Karty pokazują cenę odniesienia, szacunek kosztów wejścia i wyjścia oraz czas rozpoczęcia analizy. **Inwestuj** jest widoczne, ale nieaktywne, ponieważ wykonywanie rzeczywistych zleceń pozostaje wyłączone. Obsługa dotyczy obecnie ekranu aplikacji; powiadomienia systemowe Android są osobnym etapem.
 
 ## Budowanie APK
 
@@ -62,3 +70,4 @@ flet build apk --verbose
 8. podpisywanie wersji instalacyjnych i bezpieczne aktualizacje.
 
 Projekt nie jest już rozwijany dla Windowsa. Cały interfejs, pakowanie, bezpieczeństwo urządzenia i optymalizacja wydajności są podporządkowane Androidowi.
+

@@ -7,8 +7,10 @@ a live order.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from .execution_quality import assess_execution
 from .indicator_engine import analyze_regime
@@ -145,7 +147,11 @@ def build_best_eur_proposals(
 ) -> dict:
     """Scan EUR markets and rank final candidates using live + historical quality."""
     scan_limit = max(limit * max(scan_multiplier, 1), limit, 1)
-    opportunities = rank_eur_pairs(limit=scan_limit)
+    rejected_pairs = journal.rejected_pairs() if journal is not None else set()
+    # Make room for replacements before applying the analysis budget. Otherwise
+    # repeated dismissals could leave the scanner stuck on the same top markets.
+    ranked = rank_eur_pairs(limit=scan_limit + len(rejected_pairs))
+    opportunities = [item for item in ranked if item.pair.upper() not in rejected_pairs][:scan_limit]
     proposals: list[dict] = []
 
     recent_performance = (
@@ -164,6 +170,7 @@ def build_best_eur_proposals(
     risk_multiplier = performance_size_multiplier(recent_performance)
 
     for opportunity in opportunities:
+        analysis_started_at = datetime.now(timezone.utc).isoformat()
         try:
             proposal = build_market_proposal(
                 pair=opportunity.pair,
@@ -295,6 +302,8 @@ def build_best_eur_proposals(
                     proposal["requires_user_approval"] = False
                     proposal["final_score"] = 0.0
 
+        proposal["proposal_id"] = uuid4().hex
+        proposal["analyzed_at"] = analysis_started_at
         proposals.append(proposal)
 
     proposals.sort(
@@ -314,6 +323,7 @@ def build_best_eur_proposals(
         "quote_currency": "EUR",
         "requested_limit": limit,
         "markets_scanned": len(opportunities),
+        "rejected_pairs_skipped": sum(item.pair.upper() in rejected_pairs for item in ranked),
         "actionable_candidates": actionable,
         "uses_historical_feedback": journal is not None,
         "recent_performance": recent_performance,

@@ -7,6 +7,7 @@ not enabled.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import os
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,14 @@ class NexTradeAndroidApp:
         self.portfolio_snapshot: dict[str, Any] | None = None
         self.credentials_configured = False
         self.scan_in_progress = False
+        self.decision_in_progress = False
+        self.scan_error: str | None = None
+        self.rejection_cooldown_field = ft.TextField(
+            label="Pomijaj odrzuconą parę przez (minuty)",
+            value=str(self.core.journal.rejection_cooldown_minutes()),
+            keyboard_type=ft.KeyboardType.NUMBER,
+            helper=ft.Text("1–1440 minut. Zmiana dotyczy kolejnych odrzuceń."),
+        )
 
         self.storage = fss.SecureStorage(
             android_options=fss.AndroidOptions(
@@ -252,7 +261,7 @@ class NexTradeAndroidApp:
                     "Skanuj rynek EUR",
                     icon=ft.Icons.REFRESH,
                     on_click=self._refresh_signals,
-                    disabled=self.scan_in_progress,
+                    disabled=self.scan_in_progress or self.decision_in_progress,
                 ),
             ]
         )
@@ -283,9 +292,14 @@ class NexTradeAndroidApp:
                 "Odśwież sygnały",
                 icon=ft.Icons.REFRESH,
                 on_click=self._refresh_signals,
-                disabled=self.scan_in_progress,
+                disabled=self.scan_in_progress or self.decision_in_progress,
             ),
         ]
+
+        if self.scan_in_progress:
+            controls.append(self._card(ft.Text("Szukam kolejnej okazji…", color=ACCENT)))
+        if self.scan_error:
+            controls.append(self._card(ft.Text(self.scan_error, color=DANGER)))
 
         if not self.last_scan:
             controls.append(
@@ -296,16 +310,31 @@ class NexTradeAndroidApp:
                     )
                 )
             )
-            return self._screen(controls)
+        else:
+            proposals = self.last_scan.get("proposals") or []
+            if not any(item.get("status") == "PROPOSAL" for item in proposals):
+                controls.append(self._card(ft.Text(
+                    "Brak propozycji spełniających kryteria w tym skanie. "
+                    "Możesz ponowić wyszukiwanie przyciskiem powyżej.",
+                    color=MUTED,
+                )))
+            for item in proposals:
+                controls.append(self._signal_card(item))
 
-        proposals = self.last_scan.get("proposals") or []
-        if not proposals:
-            controls.append(self._card(ft.Text("Brak kandydatów.", color=MUTED)))
-            return self._screen(controls)
-
-        for item in proposals:
-            controls.append(self._signal_card(item))
+        rejections = self.core.journal.recent_rejections()
+        if rejections:
+            controls.append(ft.Text("Ostatnio odrzucone", color=TEXT, weight=ft.FontWeight.BOLD))
+            for rejected in rejections:
+                controls.append(ft.Text(
+                    f"{rejected['pair']} • pomijanie do "
+                    f"{self._display_time(rejected['skip_until'])}",
+                    color=MUTED, size=12,
+                ))
         return self._screen(controls)
+
+    @staticmethod
+    def _display_time(value: str) -> str:
+        return datetime.fromisoformat(value).astimezone().strftime("%d.%m %H:%M %Z")
 
     def _signal_card(self, item: dict[str, Any]) -> ft.Control:
         status = str(item.get("status") or "WAIT")
@@ -349,6 +378,39 @@ class NexTradeAndroidApp:
         ]
         if reason:
             rows.append(ft.Text(f"Filtr: {reason}", color=WARNING, size=12))
+
+        if status == "PROPOSAL":
+            entry = float(signal.get("last_price") or 0.0)
+            costs_bps = float(item.get("estimated_round_trip_cost_bps") or 0.0)
+            rows.append(ft.Text(
+                f"Cena odniesienia €{entry:.8g} • szacowane koszty wejścia "
+                f"i wyjścia €{position * costs_bps / 10_000:.4f}",
+                color=MUTED, size=12,
+            ))
+            if item.get("analyzed_at"):
+                rows.append(ft.Text(
+                    f"Analiza rozpoczęta: {self._display_time(item['analyzed_at'])}",
+                    color=MUTED, size=12,
+                ))
+            rows.append(ft.Row(
+                wrap=True,
+                controls=[
+                    ft.Button("Inwestuj", disabled=True),
+                    ft.Button(
+                        "Odrzuć",
+                        icon=ft.Icons.CLOSE,
+                        data=item.get("proposal_id"),
+                        on_click=self._reject_proposal,
+                        disabled=(self.scan_in_progress or self.decision_in_progress
+                                  or not item.get("proposal_id")),
+                    ),
+                ],
+            ))
+            rows.append(ft.Text(
+                "Inwestuj jest wyłączone w tej wersji. Odrzuć zapisuje decyzję "
+                "i od razu szuka kolejnej okazji.",
+                color=MUTED, size=12,
+            ))
 
         return self._card(ft.Column(spacing=7, controls=rows), border_color=status_color)
 
@@ -505,6 +567,14 @@ class NexTradeAndroidApp:
                     "Ustawienia",
                     "Bezpieczne połączenie aplikacji z Krakenem.",
                 ),
+                self._card(ft.Column(
+                    spacing=8,
+                    controls=[
+                        ft.Text("Odrzucanie propozycji", color=TEXT, weight=ft.FontWeight.BOLD),
+                        self.rejection_cooldown_field,
+                        ft.Button("Zapisz czas pomijania", on_click=self._save_rejection_settings),
+                    ],
+                )),
                 security_note,
                 self.api_key_field,
                 self.api_secret_field,
@@ -546,10 +616,54 @@ class NexTradeAndroidApp:
             ]
         )
 
+    async def _save_rejection_settings(self, _event: ft.Event | None = None) -> None:
+        try:
+            minutes = int(self.rejection_cooldown_field.value or "")
+            await asyncio.to_thread(self.core.journal.set_rejection_cooldown_minutes, minutes)
+            self._show_message(f"Kolejne odrzucone pary będą pomijane przez {minutes} min.", SUCCESS)
+        except (TypeError, ValueError):
+            self._show_message("Wpisz liczbę pełnych minut od 1 do 1440.", WARNING)
+        except Exception:
+            self._show_message("Nie udało się zapisać czasu pomijania. Spróbuj ponownie.", DANGER)
+
+    async def _reject_proposal(self, event: ft.Event) -> None:
+        if self.scan_in_progress or self.decision_in_progress or not self.last_scan:
+            return
+        proposal_id = event.control.data
+        item = next((item for item in self.last_scan.get("proposals", [])
+                     if item.get("proposal_id") == proposal_id
+                     and item.get("status") == "PROPOSAL"), None)
+        if item is None:
+            self._show_message("Ta propozycja nie jest już aktualna. Odśwież sygnały.", WARNING)
+            return
+
+        self.decision_in_progress = True
+        saved = False
+        try:
+            self._show_view(self.navigation.selected_index)
+            saved = await asyncio.to_thread(self.core.journal.reject_proposal, item)
+            self.last_scan["proposals"] = [
+                candidate for candidate in self.last_scan["proposals"]
+                if candidate.get("proposal_id") != proposal_id
+            ]
+            self.last_scan["actionable_candidates"] = sum(
+                candidate.get("status") == "PROPOSAL"
+                for candidate in self.last_scan["proposals"]
+            )
+            self._show_message(f"Odrzucono {item['pair']}. Decyzja została zapisana.", SUCCESS)
+        except Exception:
+            self._show_message("Nie udało się zapisać odrzucenia. Spróbuj ponownie.", DANGER)
+        finally:
+            self.decision_in_progress = False
+            self._show_view(self.navigation.selected_index)
+        if saved:
+            await self._refresh_signals()
+
     async def _refresh_signals(self, _event: ft.Event | None = None) -> None:
-        if self.scan_in_progress:
+        if self.scan_in_progress or self.decision_in_progress:
             return
         self.scan_in_progress = True
+        self.scan_error = None
         try:
             self._show_view(self.navigation.selected_index)
             self._show_busy("Skanuję rynki EUR…")
@@ -563,7 +677,11 @@ class NexTradeAndroidApp:
             self.navigation.selected_index = 1
             self._show_view(1)
         except Exception as error:
-            self._show_message(f"Skanowanie nie powiodło się: {error}", DANGER)
+            self.scan_error = (
+                f"Skanowanie nie powiodło się: {error}. "
+                "Odrzucenia pozostają zapisane. Spróbuj odświeżyć sygnały."
+            )
+            self._show_message(self.scan_error, DANGER)
         finally:
             self.scan_in_progress = False
             self._show_view(self.navigation.selected_index)

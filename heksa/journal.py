@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -40,12 +40,91 @@ class SignalJournal:
                     FOREIGN KEY(signal_id) REFERENCES signals(id)
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS proposal_rejections (
+                    proposal_id TEXT PRIMARY KEY,
+                    pair TEXT NOT NULL,
+                    rejected_at TEXT NOT NULL,
+                    skip_until TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                )"""
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rejections_expiry "
+                "ON proposal_rejections(skip_until)"
+            )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS journal_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )"""
+            )
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         return db
+
+    def rejection_cooldown_minutes(self) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT value FROM journal_settings WHERE key='rejection_cooldown_minutes'"
+            ).fetchone()
+        return int(row["value"]) if row else 30
+
+    def set_rejection_cooldown_minutes(self, minutes: int) -> None:
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 1440:
+            raise ValueError("Czas pomijania musi wynosić od 1 do 1440 pełnych minut.")
+        with self._connect() as db:
+            db.execute(
+                """INSERT INTO journal_settings(key, value)
+                   VALUES ('rejection_cooldown_minutes', ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (str(minutes),),
+            )
+
+    def reject_proposal(self, proposal: dict) -> bool:
+        """Persist one dismissal, without treating it as an order or trade outcome.
+
+        Repeated taps on the same ID cannot extend the original cooldown.
+        Existing dismissals keep their expiry when the preference changes.
+        """
+        proposal_id = str(proposal.get("proposal_id") or "").strip()
+        pair = str(proposal.get("pair") or "").strip().upper()
+        if not proposal_id or not pair or proposal.get("status") != "PROPOSAL":
+            raise ValueError("Brak aktualnej propozycji do odrzucenia.")
+        now = datetime.now(timezone.utc)
+        skip_until = now + timedelta(minutes=self.rejection_cooldown_minutes())
+        with self._connect() as db:
+            cursor = db.execute(
+                """INSERT INTO proposal_rejections
+                   (proposal_id, pair, rejected_at, skip_until, payload_json)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(proposal_id) DO NOTHING""",
+                (
+                    proposal_id, pair, now.isoformat(), skip_until.isoformat(),
+                    json.dumps(proposal, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def rejected_pairs(self) -> set[str]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT DISTINCT pair FROM proposal_rejections WHERE skip_until > ?",
+                (datetime.now(timezone.utc).isoformat(),),
+            ).fetchall()
+        return {row["pair"] for row in rows}
+
+    def recent_rejections(self, limit: int = 3) -> list[dict]:
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT proposal_id, pair, rejected_at, skip_until
+                   FROM proposal_rejections ORDER BY rejected_at DESC LIMIT ?""",
+                (max(1, min(int(limit), 100)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def record(self, proposal: dict) -> str:
         signal_id = uuid4().hex
