@@ -23,7 +23,7 @@ Dla NexTrade należy utworzyć osobny klucz Kraken z minimalnymi uprawnieniami. 
 
 ## Budowanie APK
 
-Każda zmiana dotycząca aplikacji Android, rdzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Po pomyślnym zakończeniu budowy plik jest publikowany jako artefakt `NexTrade-Android-APK` w GitHub Actions.
+Każda zmiana dotycząca aplikacji Android, rdzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Po pomyślnym zakończeniu budowy plik jest publikowany jako artefakt `flet-apk.zip` w GitHub Actions.
 
 Ręczne uruchomienie budowy:
 
@@ -31,7 +31,10 @@ Ręczne uruchomienie budowy:
 2. Wejdź w **Actions**.
 3. Wybierz **Build Android APK**.
 4. Naciśnij **Run workflow**.
-5. Po zakończeniu pobierz artefakt `NexTrade-Android-APK`.
+5. Po pomyślnym zakończeniu pobierz artefakt `flet-apk.zip`.
+6. Rozpakuj archiwum. Plikiem instalacyjnym jest `nextrade-android.apk`; plik `.sha1` służy do kontroli zgodności pobrania.
+
+Kompilacja APK nie potwierdza jeszcze uruchomienia na konkretnym telefonie. Obecne pakiety są rozwojowe i nie uruchamiają handlu prawdziwymi środkami.
 
 Lokalne polecenie dla przygotowanego środowiska Flet:
 
