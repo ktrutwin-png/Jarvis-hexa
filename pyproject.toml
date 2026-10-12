@@ -44,6 +44,8 @@ dark_color = "#071021"
 android = true
 
 [tool.flet.android]
+# krakenex publishes a pure-Python source distribution instead of a wheel.
+source_packages = ["krakenex"]
 split_per_abi = false
 legacy_packaging = false
 
