@@ -14,7 +14,8 @@ from tests.test_trade_intent import proposal
 def claim(journal, item, fingerprint=None, **changes):
     now = datetime.now(timezone.utc)
     values = dict(current_ask=100.1, quote_time=now, available_eurc=10.1,
-                  estimated_entry_fee_eurc=0.04, estimated_round_trip_cost_eurc=0.085)
+                  estimated_entry_fee_eurc=0.04, estimated_round_trip_cost_eurc=0.085,
+                  current_market_rules=item["opportunity"]["market_rules"])
     values.update(changes)
     return journal.claim(item, fingerprint or build_trade_intent(item).fingerprint, **values)
 

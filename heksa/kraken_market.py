@@ -221,3 +221,16 @@ def fetch_pretrade(symbol: str) -> dict:
     if not isinstance(result.get("bids"), list) or not isinstance(result.get("asks"), list):
         raise RuntimeError("Kraken returned no usable order book")
     return result
+
+
+def fetch_current_pair_rules(pair: str) -> dict:
+    """Uncached metadata for the future execution-time preflight."""
+    from .market_config import require_eurc_pair
+    from .order_rules import MarketRules
+    pair = require_eurc_pair(pair)
+    result = _public_get(KRAKEN_ASSET_PAIRS_API, {"pair": pair, "assetVersion": 1}, cache_ttl=0)
+    if len(result) != 1:
+        raise RuntimeError("Ambiguous pair rules response")
+    metadata = next(iter(result.values()))
+    MarketRules.from_metadata(pair, metadata)
+    return metadata

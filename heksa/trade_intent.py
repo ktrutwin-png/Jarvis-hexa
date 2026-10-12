@@ -15,6 +15,7 @@ from typing import Mapping
 
 from .market_config import base_symbol, require_eurc_pair
 from .risk import RiskLimits, validate_risk
+from .order_rules import MarketRules
 
 
 def _positive(value, label: str, *, allow_zero: bool = False) -> float:
@@ -55,6 +56,12 @@ class TradeIntent:
     estimated_round_trip_cost_eurc: float
     estimated_target_pnl_eurc: float
     estimated_stop_pnl_eurc: float
+    order_volume: str
+    order_notional_eurc: str
+    order_limit_price: str
+    order_stop_trigger: str
+    order_take_profit: str
+    market_rules_fingerprint: str
     entry_side: str = "buy"
     exit_side: str = "sell"
     settlement_currency: str = "EURC"
@@ -109,6 +116,9 @@ def build_trade_intent(proposal: Mapping, *, now: datetime | None = None) -> Tra
         stop / (1 - limits.max_stop_pct),
     )
     limit_price = math.nextafter(limit_price, reference)
+    rules = MarketRules.from_metadata(pair, (proposal.get("opportunity") or {}).get("market_rules"))
+    order = rules.prepare_buy(position, limit_price, stop, target)
+    limit_price, stop, target = float(order["price"]), float(order["stop"]), float(order["target"])
     average = _positive(execution.get("average_price"), "order-book price")
     if average > limit_price:
         raise ValueError("order-book price exceeds entry limit")
@@ -119,8 +129,9 @@ def build_trade_intent(proposal: Mapping, *, now: datetime | None = None) -> Tra
     entry_fee = position * fee_bps / 10000
     if costs < 2 * entry_fee:
         raise ValueError("round-trip estimate does not include both trading fees")
-    target_pnl = position * (target / limit_price - 1) - costs
-    stop_pnl = position * (stop / limit_price - 1) - costs
+    volume, notional = float(order["volume"]), float(order["notional"])
+    target_pnl = volume * target - notional - costs
+    stop_pnl = volume * stop - notional - costs
     if target_pnl <= 0:
         raise ValueError("target does not cover estimated costs")
     return TradeIntent(
@@ -131,6 +142,9 @@ def build_trade_intent(proposal: Mapping, *, now: datetime | None = None) -> Tra
         take_profit_eurc=target, entry_fee_allowance_eurc=entry_fee,
         estimated_round_trip_cost_eurc=costs,
         estimated_target_pnl_eurc=target_pnl, estimated_stop_pnl_eurc=stop_pnl,
+        order_volume=order["volume"], order_notional_eurc=order["notional"],
+        order_limit_price=order["price"], order_stop_trigger=order["stop"],
+        order_take_profit=order["target"], market_rules_fingerprint=rules.fingerprint,
     )
 
 
@@ -138,6 +152,7 @@ def recheck_approved_intent(
     proposal: Mapping, approved_fingerprint: str, *,
     current_ask: float, quote_time: datetime, available_eurc: float,
     estimated_entry_fee_eurc: float, estimated_round_trip_cost_eurc: float,
+    current_market_rules: Mapping,
     now: datetime | None = None,
 ) -> TradeIntent:
     """Fail closed on changed terms, stale data, a crossed stop, or low balance.
@@ -149,6 +164,9 @@ def recheck_approved_intent(
     intent = build_trade_intent(proposal, now=now)
     if intent.fingerprint != approved_fingerprint:
         raise ValueError("terms changed; a new approval is required")
+    refreshed_rules = MarketRules.from_metadata(intent.pair, current_market_rules)
+    if refreshed_rules.fingerprint != intent.market_rules_fingerprint:
+        raise ValueError("market rules changed; a new approval is required")
     quote_time = _timestamp(quote_time, "quote")
     age = (now - quote_time).total_seconds()
     if not 0 <= age <= 10:

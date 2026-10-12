@@ -26,7 +26,7 @@ from heksa.portfolio import fetch_portfolio_eurc
 
 
 APP_NAME = "NexTrade"
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 PROPOSAL_NOTIFICATION_ID = 9002
 KRAKEN_API_KEY = "nextrade.kraken.api_key"
 KRAKEN_PRIVATE_KEY = "nextrade.kraken.private_key"
@@ -678,14 +678,14 @@ class NexTradeAndroidApp:
             if intent:
                 rows.extend([
                     ft.Text(
-                        f"Plan zakupu: do {intent['entry_limit_eurc']:.8g} EURC za jednostkę. "
-                        f"Kwota {intent['position_eurc']:.2f} EURC plus do "
+                        f"Plan zakupu: {intent['order_volume']} jednostek po maks. {intent['order_limit_price']} EURC. "
+                        f"Kwota do {intent['position_eurc']:.2f} EURC plus do "
                         f"{intent['entry_fee_allowance_eurc']:.4f} EURC prowizji wejścia.",
                         color=TEXT, size=12,
                     ),
                     ft.Text(
-                        f"Plan wyjścia: cel {intent['take_profit_eurc']:.8g} EURC • "
-                        f"próg stop {intent['stop_trigger_eurc']:.8g} EURC.",
+                        f"Plan wyjścia: cel {intent['order_take_profit']} EURC • "
+                        f"próg stop {intent['order_stop_trigger']} EURC.",
                         color=TEXT, size=12,
                     ),
                     ft.Text(

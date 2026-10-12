@@ -7,7 +7,7 @@ a live order.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -19,6 +19,7 @@ from .market_analysis import analyze_prices
 from .market_config import TRADING_QUOTE, require_eurc_pair
 from .pair_scanner import rank_eurc_pairs
 from .risk import performance_size_multiplier, suggest_position_eurc, validate_risk
+from .trade_intent import build_trade_intent
 
 if TYPE_CHECKING:
     from .journal import SignalJournal
@@ -318,6 +319,17 @@ def build_best_eurc_proposals(
 
         proposal["proposal_id"] = uuid4().hex
         proposal["analyzed_at"] = analysis_started_at
+        if proposal.get("status") == "PROPOSAL" and signal_name == "BUY_CANDIDATE":
+            proposal["expires_at"] = (datetime.fromisoformat(analysis_started_at) + timedelta(seconds=120)).isoformat()
+            try:
+                intent = build_trade_intent(proposal)
+                proposal["trade_intent"] = intent.to_dict()
+                proposal["approval_fingerprint"] = intent.fingerprint
+            except ValueError:
+                # Filter before applying the result limit so the next valid
+                # market can still be selected instead of an unplaceable order.
+                proposal.update(status="FILTERED", reason="order_terms_not_executable",
+                                requires_user_approval=False, final_score=0.0)
         proposals.append(proposal)
 
     proposals.sort(

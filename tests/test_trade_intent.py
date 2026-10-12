@@ -6,6 +6,12 @@ from heksa.risk import validate_risk
 from heksa.trade_intent import build_trade_intent, recheck_approved_intent
 
 
+def market_rules():
+    return {"wsname": "XBT/EURC", "altname": "XBTEURC", "status": "online",
+            "pair_decimals": 1, "lot_decimals": 4, "lot_multiplier": 1,
+            "tick_size": "0.1", "ordermin": "0.001", "costmin": "0.5"}
+
+
 def proposal():
     now = datetime.now(timezone.utc)
     return {
@@ -13,7 +19,7 @@ def proposal():
         "status": "PROPOSAL", "requires_user_approval": True,
         "analyzed_at": now.isoformat(), "expires_at": (now + timedelta(seconds=120)).isoformat(),
         "position_eurc": 10, "estimated_round_trip_cost_bps": 85,
-        "opportunity": {"taker_fee_bps": 40},
+        "opportunity": {"taker_fee_bps": 40, "market_rules": market_rules()},
         "signal": {"signal": "BUY_CANDIDATE", "last_price": 100,
                    "stop_loss": 99.5, "take_profit": 102},
         "execution": {"executable": True, "average_price": 100.05},
@@ -24,6 +30,7 @@ def recheck(item, fingerprint, **changes):
     now = datetime.now(timezone.utc)
     values = dict(current_ask=100.1, quote_time=now, available_eurc=10.1,
                   estimated_entry_fee_eurc=0.04, estimated_round_trip_cost_eurc=0.085,
+                  current_market_rules=item["opportunity"]["market_rules"],
                   now=now)
     values.update(changes)
     return recheck_approved_intent(item, fingerprint, **values)
@@ -105,3 +112,18 @@ def test_entry_cap_is_tightened_to_respect_original_risk_limits():
     intent = build_trade_intent(item)
     assert intent.entry_limit_eurc < 100.2
     validate_risk(10, intent.entry_limit_eurc, 99.4, 101.2)
+
+
+def test_changed_market_rules_require_a_new_review():
+    item = proposal()
+    intent = build_trade_intent(item)
+    changed = {**market_rules(), "ordermin": "0.002"}
+    with pytest.raises(ValueError, match="market rules changed"):
+        recheck(item, intent.fingerprint, current_market_rules=changed)
+
+
+def test_unknown_market_rules_cannot_produce_reviewable_trade():
+    item = proposal()
+    item["opportunity"].pop("market_rules")
+    with pytest.raises(ValueError, match="not online"):
+        build_trade_intent(item)

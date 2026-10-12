@@ -27,6 +27,7 @@ class PairOpportunity:
     taker_fee_bps: float
     estimated_round_trip_cost_bps: float
     opportunity_score: float
+    market_rules: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -97,6 +98,9 @@ def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | N
         taker_fee_bps=taker_fee_bps,
         estimated_round_trip_cost_bps=estimated_round_trip_cost_bps,
         opportunity_score=score,
+        market_rules={key: pair_info.get(key) for key in (
+            "wsname", "altname", "status", "pair_decimals", "lot_decimals",
+            "lot_multiplier", "tick_size", "ordermin", "costmin")},
     )
 
 

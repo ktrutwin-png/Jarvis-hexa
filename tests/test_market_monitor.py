@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import threading
 
 from heksa import market_monitor as module
+from tests.test_trade_intent import market_rules
 
 
 def proposal(identifier="first", price=100):
@@ -13,7 +14,7 @@ def proposal(identifier="first", price=100):
         "signal": {"signal": "BUY_CANDIDATE", "last_price": price,
                    "stop_loss": price * 0.995, "take_profit": price * 1.02},
         "execution": {"executable": True, "average_price": price},
-        "opportunity": {"taker_fee_bps": 40},
+        "opportunity": {"taker_fee_bps": 40, "market_rules": market_rules()},
     }
 
 
