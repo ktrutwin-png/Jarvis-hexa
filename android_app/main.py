@@ -26,7 +26,7 @@ from heksa.portfolio import fetch_portfolio_eurc
 
 
 APP_NAME = "NexTrade"
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 PROPOSAL_NOTIFICATION_ID = 9002
 KRAKEN_API_KEY = "nextrade.kraken.api_key"
 KRAKEN_PRIVATE_KEY = "nextrade.kraken.private_key"

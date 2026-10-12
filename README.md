@@ -75,6 +75,20 @@ To nadal część przygotowywanego wykonawcy: nie jest połączona z aktywnym pr
 
 Źródła integracji: [identyfikatory klienta](https://docs.kraken.com/api/blog/cl-ord-id/), [zlecenia otwarte](https://docs.kraken.com/api-reference/account-data/get-open-orders), [zlecenia zakończone](https://docs.kraken.com/api-reference/account-data/get-closed-orders).
 
+## Rozliczanie rzeczywistych wykonań — przygotowane dla wykonawcy
+
+`heksa/position_ledger.py` prowadzi oddzielne, trwałe rozliczenie zleceń powiązanych z zatwierdzoną próbą wejścia. `KrakenClient.settlement_for_order` odczytuje `QueryOrders`, wskazane wykonania przez `QueryTrades(ledgers=True)` oraz ich wpisy `QueryLedgers`, partiami po maksymalnie 20 identyfikatorów. Wymagane są uprawnienia odczytu zleceń i transakcji oraz historii księgowej. Te funkcje niczego nie kupują ani nie sprzedają.
+
+Każde wykonanie musi zgadzać się z konkretnym zleceniem, identyfikatorem klienta, kierunkiem, parą EURC i sumami wykonania. Dwa wpisy księgowe muszą odpowiadać walucie bazowej i EURC. Prowizja w kryptowalucie zmniejsza pozostałą ilość, a prowizja w EURC wpływa na rzeczywisty przepływ EURC. Pole `fee` z historii transakcji nie jest odejmowane ponownie, ponieważ jest wyceną opłaty w walucie kwotowanej, a nie dowodem waluty potrącenia. Arytmetyka i zapis używają dokładnych liczb dziesiętnych.
+
+Ponowny odczyt, równoległe odświeżenie i restart nie powielają wykonań ani opłat. Częściowo wykonany, następnie anulowany zakup pozostaje pozycją. Częściowa sprzedaż pozostawia ilość do rozliczenia; resztka nie jest automatycznie zerowana. Końcowy wynik `round_trip_pnl_eurc` jest dostępny dopiero przy zerowej pozostałej ilości, zakończeniu wszystkich powiązanych zleceń i kompletnym rozliczeniu. Może być ujemny. Saldo całego portfela i szacowane wyniki z dziennika sygnałów nie są traktowane jako aktywa ani wynik tej pozycji.
+
+Brak wpisu, sprzeczne kwoty, nieznana waluta opłaty, niekompletne dane lub błąd połączenia pozostawiają stan `UNRECONCILED`, zachowując wcześniejsze potwierdzone wykonania. Nie powstaje wtedy końcowy wynik. Opłaty w trzecim aktywie, systemy kredytów opłat i korekty księgowe wymagają osobnej obsługi; nie są zgadywane.
+
+Moduł nie zwalnia blokady nowych wejść i nie zastępuje wykonawcy. Przyszły wykonawca musi trwale zarejestrować każdą próbę wyjścia, również z nieznanym wynikiem, chronić ilość przed podwójną sprzedażą, uzgodnić zlecenia ochronne i dopiero wtedy korzystać z rozliczenia. `track_exit` tylko łączy już zidentyfikowane zlecenie sprzedaży z pozycją; nie jest zgodą na wysłanie zlecenia. Przycisk **Inwestuj** pozostaje nieaktywny, a pełny cykl zakupu i automatycznego wyjścia nadal wymaga połączenia tych elementów.
+
+Źródła rozliczenia: [wykonania i odnośniki do księgi](https://docs.kraken.com/api-reference/account-data/query-trades-info), [odczyt wpisów księgowych](https://docs.kraken.com/api-reference/account-data/query-ledgers), [znaczenie opłat w historii transakcji](https://support.kraken.com/articles/360001184886-how-to-interpret-trades-history-fields), [kwoty i opłaty w księdze](https://support.kraken.com/articles/360001169383-how-to-interpret-ledger-history-fields).
+
 ## Budowanie APK
 
 Każda zmiana dotycząca aplikacji Android, rdzenia, natywnego rozszerzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Po pomyślnym zakończeniu budowy plik jest publikowany jako artefakt `NexTrade-Android-APK.zip` w GitHub Actions.
