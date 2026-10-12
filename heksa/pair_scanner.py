@@ -10,7 +10,7 @@ The score is a market-selection heuristic, not a profit guarantee.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from math import log10
+from math import isfinite, log10
 
 from .kraken_market import fetch_spot_pairs, fetch_tickers, ticker_for_pair
 
@@ -44,7 +44,9 @@ def _conservative_taker_fee_bps(pair_info: dict) -> float:
     percentages: list[float] = []
     for row in fees:
         try:
-            percentages.append(float(row[1]))
+            value = float(row[1])
+            if isfinite(value) and value >= 0:
+                percentages.append(value)
         except (TypeError, ValueError, IndexError):
             continue
     return max(percentages, default=0.40) * 100.0
@@ -59,7 +61,13 @@ def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | N
     high_24h = _float_at(ticker.get("h"), 1)
     vwap_24h = _float_at(ticker.get("p"), 1, last)
 
-    if min(ask, bid, last, low_24h, high_24h) <= 0:
+    if not all(isfinite(value) for value in (
+        ask, bid, last, volume_24h_base, low_24h, high_24h, vwap_24h
+    )):
+        return None
+    if min(ask, bid, last, low_24h, high_24h, vwap_24h) <= 0:
+        return None
+    if bid > ask or high_24h < low_24h or volume_24h_base < 0:
         return None
 
     mid = (ask + bid) / 2.0
@@ -72,6 +80,11 @@ def _score_pair(pair: str, pair_info: dict, ticker: dict) -> PairOpportunity | N
     liquidity_factor = max(1.0, log10(max(quote_volume, 1.0)))
     cost_penalty = 1.0 + estimated_round_trip_cost_bps / 50.0
     score = (max(range_pct, 0.0) * liquidity_factor) / cost_penalty
+
+    if not all(isfinite(value) for value in (
+        spread_bps, range_pct, quote_volume, estimated_round_trip_cost_bps, score
+    )):
+        return None
 
     return PairOpportunity(
         pair=pair,
