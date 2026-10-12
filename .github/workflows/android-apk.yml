@@ -63,7 +63,7 @@ jobs:
           PYTHONUTF8: "1"
           FLET_CLI_NO_RICH_OUTPUT: "1"
           NEXTRADE_BUILD_NUMBER: ${{ github.run_number }}
-        run: uv run python scripts/build_android.py build apk --python-version 3.12 --build-number "$NEXTRADE_BUILD_NUMBER" --verbose
+        run: uv run python scripts/build_android.py build apk --python-version 3.12 --build-number "$NEXTRADE_BUILD_NUMBER" --yes --verbose
       - name: Archive installable APK
         run: |
           python - <<'PY'
