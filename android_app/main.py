@@ -7,23 +7,27 @@ not enabled.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 from typing import Any
 
 import flet as ft
 import flet_secure_storage as fss
+from flet_android_notifications import FletAndroidNotifications, NotificationAction
+from nextrade_background import NexTradeBackground
 
 from heksa.core import HeksaCore
 from heksa.kraken import KrakenClient
 from heksa.market_config import WATCHLIST_ASSETS, fetch_market_catalog
+from heksa.market_monitor import MarketMonitor
 from heksa.portfolio import fetch_portfolio_eurc
-from heksa.trading_runner import build_best_eurc_proposals
 
 
 APP_NAME = "NexTrade"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
+PROPOSAL_NOTIFICATION_ID = 9002
 KRAKEN_API_KEY = "nextrade.kraken.api_key"
 KRAKEN_PRIVATE_KEY = "nextrade.kraken.private_key"
 
@@ -45,6 +49,15 @@ class NexTradeAndroidApp:
         storage_dir = os.environ.get("FLET_APP_STORAGE_DATA")
         data_dir = Path(storage_dir) / "heksa" if storage_dir else None
         self.core = HeksaCore(data_dir=data_dir)
+        self.monitor = MarketMonitor(self.core.data_dir)
+        self.background = NexTradeBackground()
+        self.notifications = FletAndroidNotifications(on_notification_tap=self._on_notification_tap)
+        self.monitor_enabled = False
+        self.monitor_transition = False
+        self.monitor_error: str | None = None
+        self.notified_proposal_id: str | None = None
+        self.notification_retry_at = 0.0
+        self.monitor_signature: str | None = None
         self.last_scan: dict[str, Any] | None = None
         self.portfolio_snapshot: dict[str, Any] | None = None
         self.credentials_configured = False
@@ -131,6 +144,8 @@ class NexTradeAndroidApp:
         self._show_view(0)
         self.page.run_task(self._refresh_credentials_status)
         self.page.run_task(self._refresh_market_catalog)
+        self.page.on_app_lifecycle_state_change = self._on_lifecycle_change
+        self.page.run_task(self._watch_monitor)
 
     def _configure_page(self) -> None:
         self.page.title = APP_NAME
@@ -269,6 +284,7 @@ class NexTradeAndroidApp:
                 ),
                 status,
                 metrics,
+                self._monitor_card(),
                 ft.Button(
                     "Skanuj rynek EURC",
                     icon=ft.Icons.REFRESH,
@@ -294,6 +310,157 @@ class NexTradeAndroidApp:
             ),
         )
 
+    def _monitor_card(self) -> ft.Control:
+        state = "Włączone" if self.monitor_enabled else "Zatrzymane"
+        controls = [
+            ft.Text(f"Skanowanie w tle: {state}", color=TEXT, weight=ft.FontWeight.BOLD),
+            ft.Text(
+                "Skan co 60 s po zakończeniu poprzedniego. Telefon może mieć zgaszony ekran. "
+                "Włącz powiadomienia i zezwól na pracę bez optymalizacji baterii.",
+                color=MUTED, size=12,
+            ),
+            ft.Button(
+                "Zatrzymaj skanowanie" if self.monitor_enabled else "Włącz skanowanie w tle",
+                on_click=self._toggle_monitor,
+                disabled=self.monitor_transition,
+            ),
+        ]
+        if self.last_scan and self.last_scan.get("last_success_at"):
+            controls.append(ft.Text(
+                "Ostatni udany skan: " + self._display_time(self.last_scan["last_success_at"]),
+                color=MUTED, size=12,
+            ))
+        if self.monitor_error:
+            controls.append(ft.Text(self.monitor_error, color=WARNING, size=12))
+        return self._card(ft.Column(controls=controls, spacing=8))
+
+    async def _toggle_monitor(self, _event=None) -> None:
+        if self.monitor_transition:
+            return
+        self.monitor_transition = True
+        self.monitor_error = None
+        self._show_view(self.navigation.selected_index)
+        try:
+            if self.monitor_enabled:
+                await asyncio.to_thread(self.monitor.stop)
+                self.monitor_enabled = False
+                await self.background.stop()
+                await self.notifications.cancel(PROPOSAL_NOTIFICATION_ID)
+                self.notified_proposal_id = None
+            else:
+                if not await self.notifications.request_permissions():
+                    self.monitor_error = "Zezwól na powiadomienia, aby odbierać propozycje."
+                    return
+                if not await self.background.start():
+                    self.monitor_error = "Nie uruchomiono pracy w tle. Sprawdź zgodę na działanie bez ograniczeń baterii."
+                    return
+                await asyncio.to_thread(self.monitor.start)
+                self.monitor_enabled = True
+        except Exception:
+            await asyncio.to_thread(self.monitor.stop)
+            self.monitor_enabled = False
+            self.monitor_error = "Nie udało się uruchomić lub zatrzymać trybu w tle. Spróbuj ponownie."
+            try:
+                await self.background.stop()
+                await self.notifications.cancel(PROPOSAL_NOTIFICATION_ID)
+            except Exception:
+                self.monitor_error += " Jeśli powiadomienie pracy pozostało, zatrzymaj aplikację w Androidzie."
+        finally:
+            self.monitor_transition = False
+            self.last_scan = await asyncio.to_thread(self.monitor.snapshot)
+            self._show_view(self.navigation.selected_index)
+
+    async def _on_lifecycle_change(self, event) -> None:
+        if event.state != ft.AppLifecycleState.RESUME or not self.monitor_enabled or self.monitor_transition:
+            return
+        try:
+            if not await self.background.is_enabled():
+                await asyncio.to_thread(self.monitor.stop)
+                self.monitor_enabled = False
+                self.monitor_error = "Praca w tle została zatrzymana. Włącz skanowanie ponownie."
+                self._show_view(self.navigation.selected_index)
+        except Exception:
+            self.monitor_error = "Nie udało się potwierdzić stanu pracy w tle."
+
+    async def _watch_monitor(self) -> None:
+        while True:
+            try:
+                snapshot = await asyncio.to_thread(self.monitor.snapshot)
+                signature = json.dumps(snapshot, sort_keys=True)
+                if signature != self.monitor_signature:
+                    self.monitor_signature = signature
+                    self.last_scan = snapshot
+                    self.scan_in_progress = snapshot["scanning"]
+                    self.scan_error = snapshot["last_error"]
+                    if self.navigation.selected_index in (0, 1):
+                        self._show_view(self.navigation.selected_index)
+                if not self.monitor_transition:
+                    await self._sync_proposal_notification(snapshot.get("proposal"))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.monitor_error = "Nie udało się odświeżyć stanu lub powiadomienia. Ponawiam."
+            await asyncio.sleep(1)
+
+    async def _sync_proposal_notification(self, proposal: dict | None) -> None:
+        now = datetime.now(timezone.utc)
+        if now.timestamp() < self.notification_retry_at:
+            return
+        proposal_id = proposal.get("proposal_id") if proposal and self.monitor_enabled else None
+        if proposal_id == self.notified_proposal_id:
+            return
+        try:
+            if not proposal_id:
+                await self.notifications.cancel(PROPOSAL_NOTIFICATION_ID)
+                self.notified_proposal_id = None
+                return
+            remaining = (datetime.fromisoformat(proposal["expires_at"]) - now).total_seconds()
+            if remaining <= 0:
+                return
+            signal = proposal.get("signal") or {}
+            position = float(proposal.get("position_eurc") or 0)
+            costs = position * float(proposal.get("estimated_round_trip_cost_bps") or 0) / 10000
+            side = "Kupno" if signal.get("signal") == "BUY_CANDIDATE" else "Sprzedaż"
+            await self.notifications.show_notification(
+                notification_id=PROPOSAL_NOTIFICATION_ID,
+                title=f"NexTrade: {proposal['pair']}",
+                body=f"{side} • {position:.2f} EURC • cena {float(signal.get('last_price') or 0):.8g} EURC. "
+                     f"Szac. koszty wejścia/wyjścia {costs:.4f} EURC. Otwórz szczegóły.",
+                payload=proposal_id,
+                actions=[NotificationAction("review", "Zobacz propozycję"),
+                         NotificationAction("reject", "Odrzuć", shows_user_interface=True)],
+                channel_id="nextrade_proposals_v1", channel_name="Propozycje EURC",
+                channel_description="Aktualne propozycje do oceny; bez automatycznego zakupu",
+                icon="ic_nextrade_monitor", visibility="private",
+                timeout_after=max(1, int(remaining * 1000)),
+            )
+            current = (await asyncio.to_thread(self.monitor.snapshot)).get("proposal")
+            if not self.monitor_enabled or not current or current.get("proposal_id") != proposal_id:
+                await self.notifications.cancel(PROPOSAL_NOTIFICATION_ID)
+                self.notified_proposal_id = None
+                return
+            self.notified_proposal_id = proposal_id
+        except Exception:
+            self.notification_retry_at = now.timestamp() + 30
+            self.monitor_error = "Nie udało się wyświetlić alertu. Sprawdź powiadomienia NexTrade w Androidzie."
+
+    async def _on_notification_tap(self, event) -> None:
+        try:
+            data = json.loads(event.data)
+            proposal_id = data.get("payload")
+        except (ValueError, TypeError, AttributeError):
+            return
+        snapshot = await asyncio.to_thread(self.monitor.snapshot)
+        proposal = snapshot.get("proposal")
+        self.last_scan = snapshot
+        self._show_view(1)
+        if not proposal or proposal.get("proposal_id") != proposal_id:
+            self._show_message("Ta propozycja wygasła lub została zastąpiona. Pokazuję aktualny stan.", WARNING)
+            return
+        if data.get("action_id") == "reject":
+            await self._reject_by_id(proposal_id)
+        # Opening an alert is never consent and never invokes an order endpoint.
+
     def _signals_view(self) -> ft.Control:
         controls: list[ft.Control] = [
             self._section_title(
@@ -317,7 +484,7 @@ class NexTradeAndroidApp:
             controls.append(
                 self._card(
                     ft.Text(
-                        "Nie wykonano jeszcze skanowania. Naciśnij „Odśwież sygnały”.",
+                        "Włącz skanowanie w tle na ekranie Start lub odśwież sygnały.",
                         color=MUTED,
                     )
                 )
@@ -327,7 +494,7 @@ class NexTradeAndroidApp:
             if not any(item.get("status") == "PROPOSAL" for item in proposals):
                 controls.append(self._card(ft.Text(
                     "Brak propozycji spełniających kryteria w tym skanie. "
-                    "Możesz ponowić wyszukiwanie przyciskiem powyżej.",
+                    "Przy włączonym monitorowaniu wyszukiwanie będzie ponawiane automatycznie.",
                     color=MUTED,
                 )))
             for index, item in enumerate(proposals):
@@ -429,6 +596,7 @@ class NexTradeAndroidApp:
         try:
             self._show_view(4)
             await asyncio.to_thread(self.core.journal.set_market_selection, selection)
+            await asyncio.to_thread(self.monitor.invalidate)
             self.selected_assets = selection
             self.last_scan = None
             self.scan_error = None
@@ -510,6 +678,11 @@ class NexTradeAndroidApp:
                     f"Analiza rozpoczęta: {self._display_time(item['analyzed_at'])}",
                     color=MUTED, size=12,
                 ))
+            if item.get("expires_at"):
+                rows.append(ft.Text(
+                    f"Ważna do: {self._display_time(item['expires_at'])}",
+                    color=WARNING, size=12,
+                ))
             rows.append(ft.Row(
                 wrap=True,
                 controls=[
@@ -519,7 +692,7 @@ class NexTradeAndroidApp:
                         icon=ft.Icons.CLOSE,
                         data=item.get("proposal_id"),
                         on_click=self._reject_proposal,
-                        disabled=(self.scan_in_progress or self.decision_in_progress
+                        disabled=(self.decision_in_progress
                                   or not item.get("proposal_id")),
                     ),
                 ],
@@ -685,6 +858,7 @@ class NexTradeAndroidApp:
                     "Ustawienia",
                     "Bezpieczne połączenie aplikacji z Krakenem.",
                 ),
+                self._monitor_card(),
                 self._card(ft.Column(
                     spacing=8,
                     controls=[
@@ -745,37 +919,27 @@ class NexTradeAndroidApp:
             self._show_message("Nie udało się zapisać czasu pomijania. Spróbuj ponownie.", DANGER)
 
     async def _reject_proposal(self, event: ft.Event) -> None:
-        if (self.scan_in_progress or self.decision_in_progress
-                or self.market_selection_in_progress or not self.last_scan):
-            return
-        proposal_id = event.control.data
-        item = next((item for item in self.last_scan.get("proposals", [])
-                     if item.get("proposal_id") == proposal_id
-                     and item.get("status") == "PROPOSAL"), None)
-        if item is None:
-            self._show_message("Ta propozycja nie jest już aktualna. Odśwież sygnały.", WARNING)
-            return
+        await self._reject_by_id(event.control.data)
 
+    async def _reject_by_id(self, proposal_id: str) -> None:
+        if self.decision_in_progress or self.market_selection_in_progress:
+            return
         self.decision_in_progress = True
         saved = False
         try:
             self._show_view(self.navigation.selected_index)
-            saved = await asyncio.to_thread(self.core.journal.reject_proposal, item)
-            self.last_scan["proposals"] = [
-                candidate for candidate in self.last_scan["proposals"]
-                if candidate.get("proposal_id") != proposal_id
-            ]
-            self.last_scan["actionable_candidates"] = sum(
-                candidate.get("status") == "PROPOSAL"
-                for candidate in self.last_scan["proposals"]
-            )
-            self._show_message(f"Odrzucono {item['pair']}. Decyzja została zapisana.", SUCCESS)
+            saved = await asyncio.to_thread(self.monitor.reject, proposal_id)
+            self.last_scan = await asyncio.to_thread(self.monitor.snapshot)
+            if saved:
+                self._show_message("Odrzucenie zapisane. Szukam kolejnej okazji.", SUCCESS)
+            else:
+                self._show_message("Ta propozycja wygasła, została zastąpiona lub odrzucona.", WARNING)
         except Exception:
             self._show_message("Nie udało się zapisać odrzucenia. Spróbuj ponownie.", DANGER)
         finally:
             self.decision_in_progress = False
             self._show_view(self.navigation.selected_index)
-        if saved:
+        if saved and not self.monitor_enabled:
             await self._refresh_signals()
 
     async def _refresh_signals(self, _event: ft.Event | None = None) -> None:
@@ -786,13 +950,9 @@ class NexTradeAndroidApp:
         try:
             self._show_view(self.navigation.selected_index)
             self._show_busy("Skanuję rynki EURC…")
-            result = await asyncio.to_thread(
-                lambda: build_best_eurc_proposals(
-                    limit=5,
-                    journal=self.core.journal,
-                )
-            )
-            self.last_scan = result
+            await asyncio.to_thread(self.monitor.scan_once)
+            self.last_scan = await asyncio.to_thread(self.monitor.snapshot)
+            self.scan_error = self.last_scan.get("last_error")
             self.navigation.selected_index = 1
             self._show_view(1)
         except Exception as error:
