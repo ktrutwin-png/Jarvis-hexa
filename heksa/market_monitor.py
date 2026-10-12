@@ -11,6 +11,7 @@ import threading
 
 from .journal import SignalJournal
 from .trading_runner import build_best_eurc_proposals
+from .trade_intent import build_trade_intent
 
 
 def utc_now() -> datetime:
@@ -21,7 +22,7 @@ class MarketMonitor:
     """One scan at a time; decisions invalidate in-flight results."""
 
     def __init__(self, data_dir: str | Path, interval: int = 60, ttl: int = 120):
-        if not 30 <= interval <= 3600 or not 30 <= ttl <= 900:
+        if not 30 <= interval <= 3600 or not 30 <= ttl <= 120:
             raise ValueError("Invalid scan interval or proposal lifetime")
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +75,9 @@ class MarketMonitor:
 
     @staticmethod
     def _terms(proposal: dict) -> tuple:
+        if proposal.get("trade_intent"):
+            return tuple(sorted((key, value) for key, value in proposal["trade_intent"].items()
+                                if key not in {"proposal_id", "analyzed_at", "expires_at"}))
         signal = proposal.get("signal") or {}
         return (proposal.get("pair"), proposal.get("position_eurc"),
                 signal.get("signal"), signal.get("last_price"),
@@ -88,7 +92,7 @@ class MarketMonitor:
             self.scanning = True
             self.state["last_scan_at"] = utc_now().isoformat()
         try:
-            result = build_best_eurc_proposals(limit=5, journal=self.journal)
+            result = build_best_eurc_proposals(limit=5, journal=self.journal, entry_side="buy")
             now = utc_now()
             candidate = None
             for item in result.get("proposals", []):
@@ -96,7 +100,13 @@ class MarketMonitor:
                     continue
                 expires = datetime.fromisoformat(item["analyzed_at"]) + timedelta(seconds=self.ttl)
                 if expires > now:
-                    candidate = {**item, "expires_at": expires.isoformat()}
+                    reviewed = {**item, "expires_at": expires.isoformat()}
+                    try:
+                        intent = build_trade_intent(reviewed, now=now)
+                    except ValueError:
+                        continue
+                    candidate = {**reviewed, "trade_intent": intent.to_dict(),
+                                 "approval_fingerprint": intent.fingerprint}
                     break
             with self.lock:
                 if revision != self.revision:

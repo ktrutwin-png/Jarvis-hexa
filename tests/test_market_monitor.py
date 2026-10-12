@@ -7,9 +7,13 @@ from heksa import market_monitor as module
 def proposal(identifier="first", price=100):
     return {
         "proposal_id": identifier, "pair": "XBT/EURC", "status": "PROPOSAL",
+        "requires_user_approval": True,
         "analyzed_at": datetime.now(timezone.utc).isoformat(),
         "position_eurc": 10, "estimated_round_trip_cost_bps": 80,
-        "signal": {"signal": "BUY_CANDIDATE", "last_price": price},
+        "signal": {"signal": "BUY_CANDIDATE", "last_price": price,
+                   "stop_loss": price * 0.995, "take_profit": price * 1.02},
+        "execution": {"executable": True, "average_price": price},
+        "opportunity": {"taker_fee_bps": 40},
     }
 
 

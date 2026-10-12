@@ -149,8 +149,11 @@ def build_best_eurc_proposals(
     position_eurc: float | None = None,
     scan_multiplier: int = 3,
     journal: "SignalJournal | None" = None,
+    entry_side: str | None = None,
 ) -> dict:
     """Scan EURC markets and rank final candidates using live + historical quality."""
+    if entry_side not in {None, "buy", "sell"}:
+        raise ValueError("entry_side must be buy or sell")
     scan_limit = max(limit * max(scan_multiplier, 1), limit, 1)
     rejected_pairs = journal.rejected_pairs() if journal is not None else set()
     # Make room for replacements before applying the analysis budget. Otherwise
@@ -205,6 +208,9 @@ def build_best_eurc_proposals(
         proposal["opportunity"] = opportunity_data
 
         signal_name = str(proposal["signal"].get("signal") or "")
+        if (proposal.get("status") == "PROPOSAL" and entry_side is not None
+                and _signal_side(signal_name) != entry_side):
+            proposal.update(status="FILTERED", reason="not_an_entry_signal", requires_user_approval=False)
         confidence = float(proposal["signal"].get("confidence", 0.0))
         market_score = float(opportunity_data.get("opportunity_score", 0.0))
 

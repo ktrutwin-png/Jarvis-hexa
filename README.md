@@ -55,6 +55,12 @@ Po wdrożeniu pełnej obsługi zleceń **Inwestuj** ma zatwierdzać konkretny za
 
 Warunkiem włączenia tej funkcji jest ponowna kontrola ceny, kosztów, salda i ryzyka przy zatwierdzeniu, obsługa częściowych wykonań i nieznanego statusu zlecenia, odtworzenie pozycji po restarcie oraz potwierdzona ochrona wyjścia po stronie giełdy na wypadek utraty telefonu lub sieci. Zysk jest ewentualny: saldo po zamknięciu może być niższe od zainwestowanej kwoty. Wynik musi uwzględniać rzeczywiste wykonania i wszystkie prowizje. Cykliczny skan 60 s nie jest jeszcze mechanizmem zarządzania otwartą pozycją.
 
+Moduł `heksa/trade_intent.py` przygotowuje niezmienny zestaw warunków: identyfikator propozycji, parę EURC, ważność, kwotę, maksymalną cenę zakupu, próg stop, cel wyjścia i szacowane koszty. Karta propozycji pokazuje te wartości oraz szacunek wyniku po kosztach. Górny limit ceny to maksymalnie 0,2% ponad cenę odniesienia; jest obniżany, gdy wymagają tego istniejące limity ryzyka. Ocena sygnału `/100` jest oceną heurystyczną, nie prawdopodobieństwem zysku.
+
+Monitor wysyła propozycje zakupu za EURC; sygnał sprzedaży sam w sobie nie uruchamia nowej inwestycji ani sprzedaży wcześniej posiadanych aktywów. Funkcja ponownej kontroli zatwierdzonych warunków odrzuca zmienione warunki, wygasłe propozycje, kurs starszy niż 10 sekund, przekroczony limit ceny, cenę poniżej progu stop, większe koszty i niewystarczające wolne saldo wraz z prowizją. Funkcja ta jest przygotowana dla przyszłego wykonawcy; nie wysyła zleceń i nie jest jeszcze podłączona do aktywnego przycisku Inwestuj. Wykonawca musi też uwzględnić precyzję i minimalną wielkość zlecenia danej pary oraz ochronę wyjścia.
+
+Zgaszenie ekranu pozostawia usługę włączoną. Usunięcie aplikacji z listy ostatnich aplikacji zatrzymuje użyty komponent usługi — po tym trzeba otworzyć NexTrade i ponownie uruchomić monitorowanie.
+
 ## Budowanie APK
 
 Każda zmiana dotycząca aplikacji Android, rdzenia, natywnego rozszerzenia lub konfiguracji uruchamia workflow `.github/workflows/android-apk.yml`. Po pomyślnym zakończeniu budowy plik jest publikowany jako artefakt `NexTrade-Android-APK.zip` w GitHub Actions.

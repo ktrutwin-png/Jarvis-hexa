@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,8 @@ def suggest_position_eurc(
     limits: RiskLimits = RiskLimits(),
 ) -> float:
     """Scale position size inside configured EURC limits using signal confidence."""
+    if not math.isfinite(float(confidence)):
+        raise ValueError("confidence must be finite")
     bounded = max(0.0, min(100.0, float(confidence)))
     if bounded <= 0:
         return 0.0
@@ -33,6 +36,11 @@ def validate_risk(
     take_profit: float,
     limits: RiskLimits = RiskLimits(),
 ) -> None:
+    numbers = (position_eurc, entry, stop_loss, take_profit)
+    if not all(math.isfinite(value) and value > 0 for value in numbers):
+        raise ValueError("position and prices must be finite and positive")
+    if not (stop_loss < entry < take_profit or take_profit < entry < stop_loss):
+        raise ValueError("stop and target must be on opposite sides of entry")
     if position_eurc <= 0 or position_eurc > limits.max_position_eurc:
         raise ValueError("position size outside configured limit")
     risk = abs(entry - stop_loss)

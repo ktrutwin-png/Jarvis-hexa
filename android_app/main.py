@@ -26,7 +26,7 @@ from heksa.portfolio import fetch_portfolio_eurc
 
 
 APP_NAME = "NexTrade"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 PROPOSAL_NOTIFICATION_ID = 9002
 KRAKEN_API_KEY = "nextrade.kraken.api_key"
 KRAKEN_PRIVATE_KEY = "nextrade.kraken.private_key"
@@ -653,7 +653,7 @@ class NexTradeAndroidApp:
                 ],
             ),
             ft.Text(
-                f"{signal.get('signal', 'N/A')} • pewność {confidence:.0f}%",
+                f"{signal.get('signal', 'N/A')} • ocena sygnału {confidence:.0f}/100",
                 color=MUTED,
             ),
             ft.Text(
@@ -673,6 +673,27 @@ class NexTradeAndroidApp:
                 f"i wyjścia EURC {position * costs_bps / 10_000:.4f}",
                 color=MUTED, size=12,
             ))
+            intent = item.get("trade_intent")
+            if intent:
+                rows.extend([
+                    ft.Text(
+                        f"Plan zakupu: do {intent['entry_limit_eurc']:.8g} EURC za jednostkę. "
+                        f"Kwota {intent['position_eurc']:.2f} EURC plus do "
+                        f"{intent['entry_fee_allowance_eurc']:.4f} EURC prowizji wejścia.",
+                        color=TEXT, size=12,
+                    ),
+                    ft.Text(
+                        f"Plan wyjścia: cel {intent['take_profit_eurc']:.8g} EURC • "
+                        f"próg stop {intent['stop_trigger_eurc']:.8g} EURC.",
+                        color=TEXT, size=12,
+                    ),
+                    ft.Text(
+                        f"Szacunek po kosztach: przy celu {intent['estimated_target_pnl_eurc']:+.4f} EURC; "
+                        f"przy cenie stop {intent['estimated_stop_pnl_eurc']:+.4f} EURC. "
+                        "Cena wykonania stop może być gorsza. To plan, zlecenia są wyłączone.",
+                        color=MUTED, size=12,
+                    ),
+                ])
             if item.get("analyzed_at"):
                 rows.append(ft.Text(
                     f"Analiza rozpoczęta: {self._display_time(item['analyzed_at'])}",

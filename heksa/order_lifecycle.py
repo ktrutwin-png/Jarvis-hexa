@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 import hashlib
 import json
+import math
 from pathlib import Path
 import sqlite3
 import threading
@@ -168,7 +169,7 @@ class OrderLifecycle:
         take_profit = float(signal.get("take_profit") or 0.0)
         confidence = float(signal.get("confidence") or 0.0)
 
-        if confidence < self.limits.min_confidence:
+        if not math.isfinite(confidence) or not self.limits.min_confidence <= confidence <= 100:
             raise ValueError("signal confidence is below the hard minimum")
         if position_eurc > self.limits.max_position_eurc:
             raise ValueError("position exceeds the hard EURC limit")
@@ -185,7 +186,7 @@ class OrderLifecycle:
         slippage_bps = 0.0
         if isinstance(execution, Mapping):
             slippage_bps = float(execution.get("slippage_bps") or 0.0)
-        if slippage_bps > self.limits.max_slippage_bps:
+        if not math.isfinite(slippage_bps) or not 0 <= slippage_bps <= self.limits.max_slippage_bps:
             raise ValueError("estimated slippage exceeds the hard limit")
 
         volume = position_eurc / entry
@@ -289,13 +290,18 @@ class OrderLifecycle:
     def _daily_realized_pnl_in(self, connection: sqlite3.Connection) -> float:
         raw = self._control_value(connection, f"realized_pnl:{self._today()}")
         try:
-            return float(raw or 0.0)
+            value = float(raw or 0.0)
         except ValueError:
-            return 0.0
+            raise PermissionError("daily P&L data is invalid") from None
+        if not math.isfinite(value):
+            raise PermissionError("daily P&L data is invalid")
+        return value
 
     def record_realized_pnl(self, pnl_delta_eurc: float) -> float:
         """Record realized P&L for the daily-loss circuit breaker."""
         delta = float(pnl_delta_eurc)
+        if not math.isfinite(delta):
+            raise ValueError("realized P&L must be finite")
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             value = self._daily_realized_pnl_in(connection) + delta

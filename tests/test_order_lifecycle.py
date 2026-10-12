@@ -125,3 +125,12 @@ def test_non_actionable_or_weak_signal_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="PROPOSAL"):
         lifecycle.create_from_proposal(waiting)
 
+
+def test_invalid_pnl_cannot_disable_loss_limit(tmp_path):
+    lifecycle = OrderLifecycle(tmp_path / "orders.sqlite3")
+    with pytest.raises(ValueError, match="finite"):
+        lifecycle.record_realized_pnl(float("nan"))
+    assert lifecycle.record_realized_pnl(-5) == -5
+    with pytest.raises(PermissionError, match="daily loss"):
+        lifecycle.create_from_proposal(proposal())
+
